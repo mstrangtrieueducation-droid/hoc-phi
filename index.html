@@ -149,7 +149,13 @@
   .hint { margin-top: 4px; font-size: 13px; color: var(--warn); }
   .acts { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; }
   .acts button { flex: 1 1 130px; }
-  #edErr { min-height: 20px; margin-top: 8px; font-size: 14px; color: var(--bad); }
+  #edErr, #dvErr { min-height: 20px; margin-top: 8px; font-size: 14px; color: var(--bad); }
+  .section { font-size: 16px; font-weight: 700; margin: 18px 0 8px; }
+  .empty.small { padding: 16px; }
+  .books { display: grid; gap: 6px; }
+  .books select { width: 100%; min-height: 44px; padding: 6px 10px; border: 1px solid var(--line); border-radius: 10px; background: var(--bg); }
+  .row .primary { min-height: 40px; }
+  #btnMoves { white-space: nowrap; }
 
   @media (min-width: 860px) {
     .zalo { grid-template-columns: 300px minmax(0, 1fr); align-items: start; }
@@ -182,6 +188,7 @@
       <button id="home" class="brand" aria-label="Về trang tổng quan"><i aria-hidden="true">₫</i><span>Học phí</span></button>
       <select id="lop" aria-label="Chọn lớp"></select>
       <button id="reload" aria-label="Tải lại số mới" title="Tải lại số mới">↻</button>
+      <button id="btnMoves">Biến động</button>
       <div class="spacer"></div>
       <button id="btnOut" class="quiet">Đăng xuất</button>
     </div>
@@ -204,6 +211,29 @@
     <button id="edHuy">Huỷ</button>
   </div>
   <div id="edErr" role="status"></div>
+</dialog>
+<dialog id="duyet" aria-labelledby="dvTen">
+  <h2 id="dvTen"></h2>
+  <div class="sub" id="dvRoute"></div>
+  <label for="dvDate" id="dvDateLabel">Ngày</label>
+  <input id="dvDate" type="date">
+  <label>Sách, tài liệu cần thu (tối đa 5)</label>
+  <div id="dvBooks" class="books"></div>
+  <div class="hint" id="dvAcc"></div>
+  <div class="acts">
+    <button id="dvLuu" class="primary">Thêm vào danh sách thu</button>
+    <button id="dvHuy">Huỷ</button>
+  </div>
+  <div id="dvErr" role="status"></div>
+</dialog>
+<dialog id="thiepDlg" aria-labelledby="thiepTen">
+  <h2 id="thiepTen"></h2>
+  <div class="pv"><img id="thiepAnh" alt="Thiệp học phí"></div>
+  <div class="acts">
+    <button id="thiepCopy" class="primary">Copy thiệp</button>
+    <button id="thiepDong">Đóng</button>
+  </div>
+  <div class="st" id="thiepSt" role="status"></div>
 </dialog>
 <script src="config.js"></script>
 <script src="logic.js"></script>

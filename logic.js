@@ -188,7 +188,108 @@
     return { index, value: index >= 0 ? (values[index][1] || '') : '' };
   }
 
+  /* ---------- Roster movements (new, transfer, leaving) ---------- */
+  const DAY = 86400000, TRANSFER_WINDOW = 7 * DAY, LEAVE_WAIT = DAY;
+  const EXIT_ACCOUNT = 'Triệu Thị Vân Trang - MB Bank';
+  const sameName = (a, b) => clean(a) === clean(b);
+
+  /**
+   * events: rows of _BIEN_DONG_HS without the header [time, class, vao|ra, name, english, stt, tx, ignored].
+   * newRows: HS MỚI B:D [class, name, english]. exitRows: HS NGHI_CHUYEN LOP [name, english, reason, destination, class].
+   * Returns what still needs a decision; a leaver is not offered until the 24-hour wait is over.
+   */
+  function classifyMoves(events, newRows, exitRows, now) {
+    const seen = {}, list = [];
+    (events || []).forEach((r, i) => {
+      if (!r || !r[1] || !r[3]) return;
+      const id = [r[6], r[1], r[2], clean(r[3]), clean(r[4])].join('|');
+      if (seen[id]) { seen[id].rows.push(i + 2); return; }
+      const at = new Date(r[0]).getTime() || 0;
+      seen[id] = { at, cls: String(r[1]), type: r[2], name: String(r[3]), eng: String(r[4] || ''), rows: [i + 2], ignored: !!r[7] };
+      list.push(seen[id]);
+    });
+    list.sort((a, b) => a.at - b.at);
+    const pairOf = new Map();
+    list.filter(e => e.type === 'ra').forEach(out => {
+      const near = list.filter(x => x.type === 'vao' && !pairOf.has(x) && sameName(x.name, out.name) && Math.abs(x.at - out.at) <= TRANSFER_WINDOW);
+      const other = near.filter(x => x.cls !== out.cls);
+      const again = near.filter(x => x.cls === out.cls);
+      const sameEng = other.filter(x => clean(x.eng) === clean(out.eng));
+      const pick = sameEng.length === 1 ? sameEng[0] : other.length === 1 ? other[0] : null;
+      if (pick) { pairOf.set(out, pick); pairOf.set(pick, out); out.unsureEng = clean(pick.eng) !== clean(out.eng); }
+      else if (other.length > 1) out.manyTargets = other.map(x => x.cls);
+      else if (again.length) { pairOf.set(out, again[0]); pairOf.set(again[0], out); out.cameBack = again[0].cameBack = true; }
+    });
+    const hasNew = e => (newRows || []).some(r => r && r[0] === e.cls && sameName(r[1], e.name));
+    const hasExit = (e, reason, dest) => (exitRows || []).some(r => r && sameName(r[0], e.name) && String(r[2] || '') === reason
+      && (reason === 'Chuyển lớp' ? String(r[3] || '') === dest : String(r[4] || '') === e.cls));
+    const out = [];
+    list.forEach(e => {
+      if (e.ignored || e.cameBack) return;
+      const pair = pairOf.get(e);
+      if (pair && e.type === 'vao') return; // the "ra" side of a pair reports the transfer
+      const base = { name: e.name, eng: e.eng, at: e.at, rows: pair ? e.rows.concat(pair.rows) : e.rows };
+      if (pair) {
+        if (hasExit(e, 'Chuyển lớp', pair.cls)) return;
+        out.push(Object.assign(base, { kind: 'chuyen', from: e.cls, to: pair.cls, engTo: pair.eng, unsure: !!e.unsureEng, id: 'chuyen|' + e.rows[0] }));
+      } else if (e.type === 'vao') {
+        if (hasNew(e)) return;
+        out.push(Object.assign(base, { kind: 'moi', to: e.cls, id: 'moi|' + e.rows[0] }));
+      } else {
+        if (hasExit(e, 'Nghỉ học')) return;
+        const left = LEAVE_WAIT - (now - e.at);
+        out.push(Object.assign(base, { kind: 'nghi', from: e.cls, wait: left > 0, waitMs: Math.max(0, left), targets: e.manyTargets || null, id: 'nghi|' + e.rows[0] }));
+      }
+    });
+    return out;
+  }
+
+  const NEW_TAB = 'HS MỚI', EXIT_TAB = 'HS NGHI_CHUYEN LOP';
+
+  /** Input cells for an approved move, as {tab, firstDataRow, nameCol, cells: {column: value}}. Formula columns are filled separately. */
+  function moveInputs(move, form) {
+    const books = form.books || [], date = form.date || '';
+    const cells = {};
+    if (move.kind === 'moi') {
+      Object.assign(cells, { B: move.to, C: move.name, D: move.eng, E: date });
+      ['I', 'J', 'K', 'L', 'M'].forEach((c, i) => { if (books[i]) cells[c] = books[i]; });
+      return { tab: NEW_TAB, firstDataRow: 3, nameCol: 'C', cells };
+    }
+    // "Đợt cần thu" (I) is left to its formula, which works the đợt out from the date.
+    Object.assign(cells, { B: move.name, C: move.eng, F: move.kind === 'chuyen' ? 'Chuyển lớp' : 'Nghỉ học', H: date, X: move.from });
+    if (move.kind === 'chuyen') cells.G = move.to; else cells.W = EXIT_ACCOUNT;
+    ['P', 'Q', 'R', 'S', 'T'].forEach((c, i) => { if (books[i]) cells[c] = books[i]; });
+    return { tab: EXIT_TAB, firstDataRow: 4, nameCol: 'B', cells };
+  }
+
+  const BANK_CODE = { 'MB Bank': 'MB', 'VietinBank': 'ICB' };
+  const ascii = s => String(s).normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/đ/g, 'd').replace(/Đ/g, 'D');
+  /** The QR address for a message that names its account; '' when the account or bank cannot be read. */
+  function qrFromMessage(msg, amount, info) {
+    const m = String(msg).match(/STK\s*(\d+)\s*–\s*([^–]+?)\s*–\s*(.+?)(?:,\s*đồng thời|\s+và gửi|\s*\n|$)/);
+    if (!m || !BANK_CODE[m[2]] || !amount) return '';
+    return 'https://img.vietqr.io/image/' + BANK_CODE[m[2]] + '-' + m[1] + '-compact2.png?amount=' + amount
+      + '&addInfo=' + encodeURIComponent(ascii(info).toUpperCase()) + '&accountName=' + encodeURIComponent(ascii(m[3]).toUpperCase());
+  }
+
+  /** Unpaid rows of both intake tabs that are ready to collect or need checking. Rows come from row 3 (HS MỚI, A:U) and row 4 (HS NGHI, A:X). */
+  function intakeDue(newRows, exitRows) {
+    const out = [];
+    const add = (o) => {
+      const amount = digits(o.amountText), problem = /CẦN KIỂM TRA/.test(o.amountText + ' ' + o.msg);
+      if (isPaid(o.status) || /chưa thu ngay/i.test(o.status) || (!amount && !problem)) return;
+      const tag = o.kind === 'moi' ? 'MOI' : o.kind === 'chuyen' ? 'CHUYEN' : 'NGHI';
+      const info = String(o.cls).replace(/\s+/g, '') + ' ' + tag + ' ' + (o.eng || o.name);
+      const reason = problem ? ((o.amountText + '\n' + o.msg).match(/CẦN KIỂM TRA:[^\n]*/) || [''])[0].replace('CẦN KIỂM TRA: ', '') : '';
+      out.push(Object.assign(o, { amount: problem ? 0 : amount, problem, reason, key: o.tab + '|' + o.row, trong: false,
+        qr: problem ? '' : qrFromMessage(o.msg, amount, info), msg: o.msg }));
+    };
+    (newRows || []).forEach((r, i) => { if (r && r[2]) add({ tab: NEW_TAB, row: i + 3, kind: 'moi', cls: r[1], name: r[2], eng: r[3] || '', amountText: String(r[15] || ''), status: String(r[16] || ''), msg: String(r[19] || ''), statusCol: 'Q', dateCol: 'R' }); });
+    (exitRows || []).forEach((r, i) => { if (r && r[1]) add({ tab: EXIT_TAB, row: i + 4, kind: r[5] === 'Chuyển lớp' ? 'chuyen' : 'nghi', cls: r[5] === 'Chuyển lớp' ? r[6] : r[23], name: r[1], eng: r[2] || '', amountText: String(r[10] || ''), status: String(r[9] || ''), msg: String(r[12] || ''), statusCol: 'J', dateCol: 'L' }); });
+    return out;
+  }
+
   function todayText(d) { const p = n => ('0' + n).slice(-2); return p(d.getDate()) + '/' + p(d.getMonth() + 1) + '/' + d.getFullYear(); }
 
-  return { buildClass, classRanges, freshRanges, freshAt, planPaid, planUnpaid, planOverride, findPeriodCol, colA1, quote, fmt, digits, clean, isPaid, todayText, ACTIVE };
+  return { classifyMoves, moveInputs, qrFromMessage, intakeDue, EXIT_ACCOUNT, NEW_TAB, EXIT_TAB, buildClass, classRanges, freshRanges, freshAt, planPaid, planUnpaid, planOverride, findPeriodCol, colA1, quote, fmt, digits, clean, isPaid, todayText, ACTIVE };
 });

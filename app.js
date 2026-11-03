@@ -232,7 +232,7 @@ function veThiep(it, q) {
   ctx.fillStyle = MAU; ctx.fillRect(0, 0, W, BAND);
   ctx.fillStyle = '#fff'; ctx.textAlign = 'center';
   ctx.font = 'bold 50px Arial'; ctx.fillText('THÔNG BÁO HỌC PHÍ', W / 2, 88);
-  ctx.font = '30px Arial'; ctx.fillText(lop || cur.lop, W / 2, 136);
+  ctx.font = '30px Arial'; ctx.fillText(lop || (cur && cur.lop) || '', W / 2, 136);
   ctx.textAlign = 'left';
   body(true);
   let y = bodyEnd + 10;
@@ -277,8 +277,147 @@ function st(s, err) { const n = $('st'); if (n) { n.textContent = s; n.style.col
 function render() {
   const box = $('view'); box.replaceChildren();
   $('reload').setAttribute('aria-label', view === 'home' ? 'Tải lại tất cả các lớp' : 'Tải lại số mới của lớp');
-  if (view === 'home') renderHome(box); else renderClass(box);
+  if (view === 'home') renderHome(box); else if (view === 'moves') renderMoves(box); else renderClass(box);
+  const n = moves ? moves.list.filter(m => !m.wait).length + moves.due.length : 0;
+  $('btnMoves').textContent = n ? 'Biến động (' + n + ')' : 'Biến động';
   renderNotices();
+}
+
+/* ---------- Student movements: new, transfer, leaving ---------- */
+let moves = null, movesLoading = false, books = [];
+const KIND = { moi: 'Học sinh mới', chuyen: 'Chuyển lớp', nghi: 'Nghỉ học' };
+const dayText = ms => { const d = new Date(ms), p = n => ('0' + n).slice(-2); return p(d.getDate()) + '/' + p(d.getMonth() + 1) + '/' + d.getFullYear(); };
+const isoOf = ms => { const d = new Date(ms), p = n => ('0' + n).slice(-2); return d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate()); };
+async function loadMoves() {
+  if (movesLoading) return;
+  movesLoading = true; if (view === 'moves') render();
+  try {
+    // The log tab appears at the first roster change, so a missing tab just means no events yet.
+    const events = await batchGet(["'_BIEN_DONG_HS'!A2:H3000"]).then(x => x[0]).catch(e => { if (/Unable to parse range/.test(e.message)) return []; throw e; });
+    const [news, exits, bookRows] = await batchGet([L.quote(L.NEW_TAB) + '!A3:U199', L.quote(L.EXIT_TAB) + '!A4:X400', "'DANH_MUC_SACH'!A4:A80"]);
+    books = bookRows.map(r => r[0]).filter(x => x && !/^Không thu/.test(x));
+    moves = {
+      list: L.classifyMoves(events, news.map(r => [r[1], r[2], r[3]]), exits.map(r => [r[1], r[2], r[5], r[6], r[23]]), Date.now()),
+      due: L.intakeDue(news, exits), at: Date.now()
+    };
+    notice('');
+  } catch (e) { notice('Chưa đọc được biến động học sinh: ' + e.message, true); }
+  movesLoading = false; render();
+}
+function renderMoves(box) {
+  box.append(el('div', { class: 'page-title' }, [
+    el('div', {}, [el('h1', { textContent: 'Biến động học sinh' }),
+      el('div', { class: 'sub', textContent: movesLoading ? 'Đang đọc…' : moves ? 'Số mới lúc ' + new Date(moves.at).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' }) : '' })]),
+    el('button', { textContent: 'Tải lại', disabled: movesLoading, onclick: loadMoves })]));
+  if (!moves) { box.append(el('div', { class: 'empty', textContent: 'Đang đọc…' })); return; }
+  const ready = moves.list.filter(m => !m.wait), waiting = moves.list.filter(m => m.wait);
+  box.append(el('h2', { class: 'section', textContent: 'Cần duyệt (' + ready.length + ')' }));
+  box.append(ready.length ? el('div', { class: 'fee-list' }, ready.map(moveRow)) : el('div', { class: 'empty small', textContent: 'Không có thay đổi nào cần duyệt.' }));
+  if (waiting.length) {
+    box.append(el('h2', { class: 'section', textContent: 'Đang đợi 24 giờ (' + waiting.length + ')' }),
+      el('p', { class: 'sub', style: 'margin-bottom:8px', textContent: 'Đã mất khỏi danh sách lớp. Nếu trong 24 giờ các em xuất hiện ở lớp khác, app sẽ tính là chuyển lớp.' }),
+      el('div', { class: 'fee-list' }, waiting.map(moveRow)));
+  }
+  box.append(el('h2', { class: 'section', textContent: 'Cần thu (' + moves.due.length + ')' }));
+  box.append(moves.due.length ? el('div', { class: 'fee-list' }, moves.due.map(dueRow)) : el('div', { class: 'empty small', textContent: 'Không có khoản nào đang chờ thu.' }));
+}
+function moveRow(m) {
+  const route = m.kind === 'chuyen' ? m.from + ' → ' + m.to : m.kind === 'moi' ? 'Vào ' + m.to : 'Rời ' + m.from;
+  const notes = [];
+  if (m.unsure) notes.push('Tên tiếng Anh ở hai lớp khác nhau (' + (m.eng || 'trống') + ' / ' + (m.engTo || 'trống') + '). Kiểm tra có đúng một em không.');
+  if (m.targets) notes.push('Có em cùng tên mới vào ' + m.targets.join(', ') + '. Nếu là chuyển lớp, bạn nhập tay trong Sheet.');
+  return el('div', { class: 'row card' }, [
+    el('div', { class: 'r1' }, [el('span', { class: 'nm', textContent: fullName(m) }), el('span', { class: 'chip idle', textContent: KIND[m.kind] })]),
+    el('div', { class: 'sub', style: 'margin-top:4px', textContent: route + ' · ghi nhận ' + dayText(m.at) }),
+    notes.length ? el('div', { class: 'warn-line' }, [notes.join(' ')]) : '',
+    m.wait ? el('div', { class: 'sub', style: 'margin-top:4px', textContent: 'Còn khoảng ' + Math.ceil(m.waitMs / 3600000) + ' giờ nữa.' })
+      : el('div', { class: 'r2' }, [el('div', { class: 'fill' }), el('button', { class: 'quiet', textContent: 'Bỏ qua', onclick: () => boQuaMove(m) }), el('button', { class: 'primary', textContent: 'Duyệt', onclick: () => moDuyet(m) })])]);
+}
+function dueRow(it) {
+  const d = el('input', { type: 'date', value: localDate(), max: localDate(), 'aria-label': 'Ngày nộp của ' + it.name });
+  return el('div', { class: 'row card' }, [
+    el('div', { class: 'r1' }, [el('span', { class: 'nm', textContent: fullName(it) }), el('span', { class: 'amt', textContent: it.problem ? 'Cần kiểm tra' : money(it.amount) })]),
+    el('div', { class: 'sub', style: 'margin-top:4px', textContent: KIND[it.kind] + ' · ' + it.cls }),
+    it.problem ? el('div', { class: 'warn-line' }, ['Sheet chưa tính được số tiền (tab ' + it.tab + ', dòng ' + it.row + '): ' + (it.reason || 'bạn mở Sheet kiểm tra.')])
+      : el('div', { class: 'r2' }, [el('button', { textContent: 'Xem thiệp', disabled: !it.qr, onclick: () => moThiep(it) }), el('div', { class: 'fill' }), d, el('button', { class: 'tick', textContent: 'Đã nộp', onclick: () => tickDue(it, d.value) })])]);
+}
+function moThiep(it) {
+  const img = $('thiepAnh'); img.removeAttribute('src');
+  $('thiepTen').textContent = fullName(it); $('thiepSt').textContent = '';
+  $('thiepDlg').dataset.key = it.key; $('thiepDlg').showModal();
+  thiep(it).then(b => { img.src = URL.createObjectURL(b); }).catch(e => { $('thiepSt').textContent = 'Không tạo được thiệp: ' + e.message; });
+}
+async function copyThiep() {
+  const it = moves && moves.due.find(x => x.key === $('thiepDlg').dataset.key); if (!it) return;
+  try { await navigator.clipboard.write([new ClipboardItem({ 'image/png': thiep(it) })]); $('thiepSt').textContent = 'Đã copy thiệp, sang Zalo dán rồi gửi.'; }
+  catch (e) { $('thiepSt').textContent = 'Không copy được: nhấn giữ hoặc chuột phải vào ảnh để sao chép.'; }
+}
+async function tickDue(it, iso) {
+  if (!iso) return notice('Hãy chọn ngày nộp.', true);
+  const [y, m, d] = iso.split('-'), tab = L.quote(it.tab), nameCol = it.tab === L.NEW_TAB ? 'C' : 'B';
+  notice('Đang lưu ' + it.name + '…');
+  try {
+    const [[names], [status]] = await Promise.all([batchGet([tab + '!' + nameCol + it.row]), batchGet([tab + '!' + it.statusCol + it.row], 'FORMULA')]);
+    if (L.clean((names[0] || [])[0]) !== L.clean(it.name)) throw new Error('Dòng ' + it.row + ' đã đổi học sinh, hãy tải lại.');
+    const data = [{ range: tab + '!' + it.dateCol + it.row, values: [[d + '/' + m + '/' + y]] }];
+    if (!/^=/.test(String((status[0] || [])[0] || ''))) data.push({ range: tab + '!' + it.statusCol + it.row, values: [['Đã nộp']] });
+    await batchWrite(data);
+    await loadMoves();
+    notice('Đã lưu ' + it.name + '.');
+  } catch (e) { notice('Không lưu được: ' + e.message, true); }
+}
+function moDuyet(m) {
+  const cls = m.kind === 'nghi' ? m.from : m.to;
+  $('dvTen').textContent = KIND[m.kind] + ': ' + fullName(m);
+  $('dvRoute').textContent = m.kind === 'chuyen' ? m.from + ' → ' + m.to : cls;
+  $('dvDateLabel').textContent = m.kind === 'moi' ? 'Ngày vào lớp' : m.kind === 'chuyen' ? 'Ngày chuyển' : 'Ngày nghỉ';
+  $('dvDate').value = isoOf(m.at); $('dvDate').max = '';
+  $('dvAcc').textContent = m.kind === 'nghi' ? 'Thu vào tài khoản: ' + L.EXIT_ACCOUNT : '';
+  $('dvErr').textContent = '';
+  const options = [el('option', { value: '', textContent: '(Không chọn)' })].concat(books.map(b => el('option', { value: b, textContent: b })));
+  const wrap = $('dvBooks'); wrap.replaceChildren();
+  for (let k = 0; k < 5; k++) wrap.append(el('select', { 'aria-label': 'Sách ' + (k + 1) }, options.map(o => o.cloneNode(true))));
+  $('duyet').dataset.id = m.id; $('duyet').showModal();
+}
+async function luuDuyet() {
+  const m = moves.list.find(x => x.id === $('duyet').dataset.id); if (!m) return;
+  const iso = $('dvDate').value;
+  if (!iso) { $('dvErr').textContent = 'Hãy chọn ngày.'; return; }
+  const [y, mo, d] = iso.split('-'), bookList = [...$('dvBooks').querySelectorAll('select')].map(s => s.value).filter(Boolean);
+  const input = L.moveInputs(m, { date: d + '/' + mo + '/' + y, books: bookList });
+  $('dvErr').textContent = 'Đang lưu…'; $('dvLuu').disabled = true;
+  try {
+    await ghiDongMoi(input);
+    $('duyet').close();
+    notice('Đã thêm ' + m.name + ' vào tab ' + input.tab + '. Số tiền sẽ hiện ở mục Cần thu sau khi Sheet tính xong.');
+    await loadMoves();
+  } catch (e) { $('dvErr').textContent = 'Không lưu được: ' + e.message; }
+  $('dvLuu').disabled = false;
+}
+/** Adds a row below the last used one and copies the formula columns from the row above, the way a person fills the tab down. */
+async function ghiDongMoi(input) {
+  const tab = L.quote(input.tab), meta = await api('?fields=sheets.properties(sheetId%2Ctitle)');
+  const sheetId = (meta.sheets.find(s => s.properties.title === input.tab) || { properties: {} }).properties.sheetId;
+  if (sheetId === undefined) throw new Error('Không thấy tab ' + input.tab);
+  const nameRange = input.nameCol + input.firstDataRow + ':' + input.nameCol + '1000';
+  const [names] = await batchGet([tab + '!' + nameRange]);
+  let lastIdx = -1; names.forEach((r, k) => { if (r[0]) lastIdx = k; });
+  if (lastIdx < 0) throw new Error('Tab ' + input.tab + ' chưa có dòng mẫu.');
+  const source = input.firstDataRow + lastIdx, target = source + 1;
+  const [rowFormulas] = await batchGet([tab + '!A' + source + ':X' + source], 'FORMULA');
+  const requests = [];
+  (rowFormulas[0] || []).forEach((v, c) => {
+    if (!/^=/.test(String(v)) || input.cells[L.colA1(c + 1)] !== undefined) return;
+    requests.push({ copyPaste: { source: { sheetId, startRowIndex: source - 1, endRowIndex: source, startColumnIndex: c, endColumnIndex: c + 1 },
+      destination: { sheetId, startRowIndex: target - 1, endRowIndex: target, startColumnIndex: c, endColumnIndex: c + 1 }, pasteType: 'PASTE_FORMULA' } });
+  });
+  if (requests.length) await api(':batchUpdate', { method: 'POST', body: JSON.stringify({ requests }) }, 2);
+  await batchWrite(Object.keys(input.cells).filter(c => input.cells[c] !== '').map(c => ({ range: tab + '!' + c + target, values: [[input.cells[c]]] })));
+}
+async function boQuaMove(m) {
+  if (!confirm('Bỏ qua ' + fullName(m) + '? App sẽ không nhắc lại thay đổi này.')) return;
+  try { await batchWrite(m.rows.map(r => ({ range: "'_BIEN_DONG_HS'!H" + r, values: [['bo-qua']] }))); await loadMoves(); }
+  catch (e) { notice('Không lưu được: ' + e.message, true); }
 }
 function stat(value, label, alert) { return el('div', { class: alert ? 'stat card alert' : 'stat card' }, [el('b', { textContent: value }), el('span', { textContent: label })]); }
 
@@ -465,6 +604,7 @@ async function afterLogin() {
     if (view === 'home') { render(); if (!store.get('hp_all_at') || Date.now() - store.get('hp_all_at') > 1800000) loadAll(); }
   } catch (e) { notice('Chưa đọc được danh sách lớp: ' + e.message, true); }
   if (pending.length) flush();
+  loadMoves();
 }
 function fillClasses(list) {
   classes = list; const s = $('lop'), v = s.value;
@@ -475,7 +615,12 @@ window.addEventListener('load', () => {
   $('btnLogin').addEventListener('click', () => getToken(true).then(afterLogin).catch(e => { $('loginMsg').textContent = e.message; }));
   $('home').addEventListener('click', () => { view = 'home'; $('lop').value = ''; notice(''); render(); });
   $('lop').addEventListener('change', e => { if (e.target.value) { filter = 'can'; openClass(e.target.value); } });
-  $('reload').addEventListener('click', () => { if (view === 'home') loadAll(); else if (cur) openClass(cur.tab); });
+  $('reload').addEventListener('click', () => { if (view === 'home') loadAll(); else if (view === 'moves') loadMoves(); else if (cur) openClass(cur.tab); });
+  $('btnMoves').addEventListener('click', () => { view = 'moves'; $('lop').value = ''; notice(''); render(); loadMoves(); });
+  $('dvLuu').addEventListener('click', luuDuyet);
+  $('dvHuy').addEventListener('click', () => $('duyet').close());
+  $('thiepCopy').addEventListener('click', copyThiep);
+  $('thiepDong').addEventListener('click', () => $('thiepDlg').close());
   $('btnOut').addEventListener('click', () => {
     if (pending.length && !confirm('Còn ' + pending.length + ' lần tick chưa lưu sẽ bị bỏ. Vẫn đăng xuất?')) return;
     if (token) google.accounts.oauth2.revoke(token, () => {});
