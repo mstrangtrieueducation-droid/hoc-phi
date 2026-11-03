@@ -205,7 +205,7 @@
       const id = [r[6], r[1], r[2], clean(r[3]), clean(r[4])].join('|');
       if (seen[id]) { seen[id].rows.push(i + 2); return; }
       const at = new Date(r[0]).getTime() || 0;
-      seen[id] = { at, cls: String(r[1]), type: r[2], name: String(r[3]), eng: String(r[4] || ''), rows: [i + 2], ignored: !!r[7] };
+      seen[id] = { at, cls: String(r[1]), type: r[2], name: String(r[3]), eng: String(r[4] || ''), rows: [i + 2], ignored: !!r[7], blocks: parseBlocks(r[8]) };
       list.push(seen[id]);
     });
     list.sort((a, b) => a.at - b.at);
@@ -238,10 +238,32 @@
       } else {
         if (hasExit(e, 'Nghỉ học')) return;
         const left = LEAVE_WAIT - (now - e.at);
-        out.push(Object.assign(base, { kind: 'nghi', from: e.cls, wait: left > 0, waitMs: Math.max(0, left), targets: e.manyTargets || null, id: 'nghi|' + e.rows[0] }));
+        out.push(Object.assign(base, { kind: 'nghi', from: e.cls, blocks: e.blocks, wait: left > 0, waitMs: Math.max(0, left), targets: e.manyTargets || null, id: 'nghi|' + e.rows[0] }));
       }
     });
     return out;
+  }
+
+  function parseBlocks(text) { try { const v = JSON.parse(text || 'null'); return Array.isArray(v) ? v : null; } catch (e) { return null; } }
+  function dayNumber(text) {
+    const m = String(text || '').match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})/);
+    return m ? Date.UTC(+m[3], +m[2] - 1, +m[1]) : 0;
+  }
+  /**
+   * Whether a leaving student still owes for the date they left. The dates on a class history row labelled đợt n are the
+   * lessons of đợt n-1: row n only says when đợt n is collected. After the last known lesson the student is in the newest đợt.
+   * hist: J18:N36 of the class [collect date, type, đợt, first lesson, last lesson]. blocks: the student's đợt saved when they left.
+   */
+  function leaveStatus(hist, blocks, dateText) {
+    const day = dayNumber(dateText), rows = (hist || []).map(r => ({ dot: Number(String((r || [])[2] || '').replace(/\D/g, '')), from: dayNumber((r || [])[3]), to: dayNumber((r || [])[4]) })).filter(r => r.dot && r.from && r.to);
+    if (!day || !rows.length) return { state: 'khong-ro', dot: 0, noSchedule: false };
+    const hit = rows.find(r => r.from <= day && day <= r.to), last = rows.reduce((a, b) => (b.to > a.to ? b : a));
+    const dot = hit ? hit.dot - 1 : day > last.to ? last.dot : 0, noSchedule = !hit && day > last.to;
+    if (!dot) return { state: 'khong-ro', dot: 0, noSchedule: false };
+    const block = (blocks || []).find(b => Number(String(b.d || '').replace(/\D/g, '')) === dot);
+    if (!block) return { state: 'khong-ro', dot, noSchedule };
+    // A blank status is not proof of owing: only an explicit "Chưa nộp" is, otherwise the owner decides.
+    return { state: isPaid(block.s) || block.n ? 'da-dong' : /chưa nộp|chua nop/i.test(String(block.s)) ? 'chua-dong' : 'khong-ro', dot, noSchedule };
   }
 
   const NEW_TAB = 'HS MỚI', EXIT_TAB = 'HS NGHI_CHUYEN LOP';
@@ -291,5 +313,5 @@
 
   function todayText(d) { const p = n => ('0' + n).slice(-2); return p(d.getDate()) + '/' + p(d.getMonth() + 1) + '/' + d.getFullYear(); }
 
-  return { classifyMoves, moveInputs, qrFromMessage, intakeDue, EXIT_ACCOUNT, NEW_TAB, EXIT_TAB, buildClass, classRanges, freshRanges, freshAt, planPaid, planUnpaid, planOverride, findPeriodCol, colA1, quote, fmt, digits, clean, isPaid, todayText, ACTIVE };
+  return { leaveStatus, classifyMoves, moveInputs, qrFromMessage, intakeDue, EXIT_ACCOUNT, NEW_TAB, EXIT_TAB, buildClass, classRanges, freshRanges, freshAt, planPaid, planUnpaid, planOverride, findPeriodCol, colA1, quote, fmt, digits, clean, isPaid, todayText, ACTIVE };
 });

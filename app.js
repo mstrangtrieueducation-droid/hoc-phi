@@ -293,7 +293,7 @@ async function loadMoves() {
   movesLoading = true; if (view === 'moves') render();
   try {
     // The log tab appears at the first roster change, so a missing tab just means no events yet.
-    const events = await batchGet(["'_BIEN_DONG_HS'!A2:H3000"]).then(x => x[0]).catch(e => { if (/Unable to parse range/.test(e.message)) return []; throw e; });
+    const events = await batchGet(["'_BIEN_DONG_HS'!A2:I3000"]).then(x => x[0]).catch(e => { if (/Unable to parse range/.test(e.message)) return []; throw e; });
     const [news, exits, bookRows] = await batchGet([L.quote(L.NEW_TAB) + '!A3:U199', L.quote(L.EXIT_TAB) + '!A4:X400', "'DANH_MUC_SACH'!A4:A80"]);
     books = bookRows.map(r => r[0]).filter(x => x && !/^Không thu/.test(x));
     moves = {
@@ -374,10 +374,44 @@ function moDuyet(m) {
   $('dvDate').value = isoOf(m.at); $('dvDate').max = '';
   $('dvAcc').textContent = m.kind === 'nghi' ? 'Thu vào tài khoản: ' + L.EXIT_ACCOUNT : '';
   $('dvErr').textContent = '';
+  $('dvLuu').hidden = false; $('dvKhongThu').hidden = true; $('dvLuu').textContent = 'Thêm vào danh sách thu';
+  $('dvStatus').textContent = ''; dvHist = null;
+  if (m.kind === 'nghi') {
+    $('dvStatus').textContent = 'Đang xem em đã đóng đợt đó chưa…';
+    batchGet([L.quote(m.from) + '!J18:N36']).then(([h]) => { if ($('duyet').dataset.id === m.id) { dvHist = h; capNhatNghi(m); } })
+      .catch(() => { dvHist = []; capNhatNghi(m); });
+  }
+  $('dvDate').onchange = () => { if (m.kind === 'nghi' && dvHist) capNhatNghi(m); };
   const options = [el('option', { value: '', textContent: '(Không chọn)' })].concat(books.map(b => el('option', { value: b, textContent: b })));
   const wrap = $('dvBooks'); wrap.replaceChildren();
   for (let k = 0; k < 5; k++) wrap.append(el('select', { 'aria-label': 'Sách ' + (k + 1) }, options.map(o => o.cloneNode(true))));
   $('duyet').dataset.id = m.id; $('duyet').showModal();
+}
+let dvHist = null;
+const isoToText = iso => { const [y, m, d] = String(iso).split('-'); return iso ? d + '/' + m + '/' + y : ''; };
+/** Shows what the leaving date means for this student, and which action comes first. */
+function capNhatNghi(m) {
+  const r = L.leaveStatus(dvHist, m.blocks, isoToText($('dvDate').value)), dot = r.dot ? 'Đợt ' + r.dot : 'đợt này';
+  const lich = r.noSchedule ? ' Lịch đợt này chưa có trong lớp nên Sheet sẽ báo cần kiểm tra, chưa ra số tiền.' : '';
+  $('dvKhongThu').hidden = false; $('dvLuu').hidden = false; $('dvLuu').className = ''; $('dvKhongThu').className = '';
+  if (r.state === 'da-dong') {
+    $('dvStatus').textContent = 'Ngày này thuộc ' + dot + ', em đã đóng. Không thu gì thêm.';
+    $('dvKhongThu').className = 'primary'; $('dvLuu').textContent = 'Vẫn tính tiền';
+  } else if (r.state === 'chua-dong') {
+    $('dvStatus').textContent = 'Ngày này thuộc ' + dot + ', em chưa đóng. Thu theo số buổi đã học.' + lich;
+    $('dvLuu').className = 'primary'; $('dvLuu').textContent = 'Thêm vào danh sách thu';
+  } else {
+    $('dvStatus').textContent = 'Chưa rõ em đã đóng ' + dot + ' chưa (không có dữ liệu). Bạn kiểm tra rồi chọn.' + lich;
+    $('dvLuu').textContent = 'Chưa đóng, tính tiền';
+  }
+}
+async function khongThuMove() {
+  const m = moves.list.find(x => x.id === $('duyet').dataset.id); if (!m) return;
+  $('dvErr').textContent = 'Đang lưu…';
+  try {
+    await batchWrite(m.rows.map(r => ({ range: "'_BIEN_DONG_HS'!H" + r, values: [['khong-thu']] })));
+    $('duyet').close(); notice('Đã ghi nhận ' + m.name + ' nghỉ, không thu thêm.'); await loadMoves();
+  } catch (e) { $('dvErr').textContent = 'Không lưu được: ' + e.message; }
 }
 async function luuDuyet() {
   const m = moves.list.find(x => x.id === $('duyet').dataset.id); if (!m) return;
@@ -618,6 +652,7 @@ window.addEventListener('load', () => {
   $('reload').addEventListener('click', () => { if (view === 'home') loadAll(); else if (view === 'moves') loadMoves(); else if (cur) openClass(cur.tab); });
   $('btnMoves').addEventListener('click', () => { view = 'moves'; $('lop').value = ''; notice(''); render(); loadMoves(); });
   $('dvLuu').addEventListener('click', luuDuyet);
+  $('dvKhongThu').addEventListener('click', khongThuMove);
   $('dvHuy').addEventListener('click', () => $('duyet').close());
   $('thiepCopy').addEventListener('click', copyThiep);
   $('thiepDong').addEventListener('click', () => $('thiepDlg').close());
