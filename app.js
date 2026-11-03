@@ -307,9 +307,9 @@ async function loadMoves() {
 function renderMoves(box) {
   box.append(el('div', { class: 'page-title' }, [
     el('div', {}, [el('h1', { textContent: 'Biến động học sinh' }),
-      el('div', { class: 'sub', textContent: movesLoading ? 'Đang đọc…' : moves ? 'Số mới lúc ' + new Date(moves.at).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' }) : '' })]),
+      el('div', { class: 'sub', textContent: movesLoading ? 'Đang đọc, file có thể đang bận nên có thể mất vài phút…' : moves ? 'Số mới lúc ' + new Date(moves.at).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' }) : '' })]),
     el('button', { textContent: 'Tải lại', disabled: movesLoading, onclick: loadMoves })]));
-  if (!moves) { box.append(el('div', { class: 'empty', textContent: 'Đang đọc…' })); return; }
+  if (!moves) { box.append(el('div', { class: 'empty', textContent: movesLoading ? 'Đang đọc, xin đợi…' : 'Chưa đọc được. Bấm Tải lại để thử lại.' })); return; }
   const ready = moves.list.filter(m => !m.wait), waiting = moves.list.filter(m => m.wait);
   box.append(el('h2', { class: 'section', textContent: 'Cần duyệt (' + ready.length + ')' }));
   box.append(ready.length ? el('div', { class: 'fee-list' }, ready.map(moveRow)) : el('div', { class: 'empty small', textContent: 'Không có thay đổi nào cần duyệt.' }));
@@ -374,10 +374,11 @@ function moDuyet(m) {
   $('dvDate').value = isoOf(m.at); $('dvDate').max = '';
   $('dvAcc').textContent = m.kind === 'nghi' ? 'Thu vào tài khoản: ' + L.EXIT_ACCOUNT : '';
   $('dvErr').textContent = '';
-  $('dvLuu').hidden = false; $('dvKhongThu').hidden = true; $('dvLuu').textContent = 'Thêm vào danh sách thu';
+  $('dvLuu').hidden = false; $('dvLuu').disabled = false; $('dvLuu').className = 'primary'; $('dvKhongThu').hidden = true; $('dvLuu').textContent = 'Thêm vào danh sách thu';
   $('dvStatus').textContent = ''; dvHist = null;
   if (m.kind === 'nghi') {
     $('dvStatus').textContent = 'Đang xem em đã đóng đợt đó chưa…';
+    $('dvLuu').disabled = true;
     batchGet([L.quote(m.from) + '!J18:N36']).then(([h]) => { if ($('duyet').dataset.id === m.id) { dvHist = h; capNhatNghi(m); } })
       .catch(() => { dvHist = []; capNhatNghi(m); });
   }
@@ -393,7 +394,7 @@ const isoToText = iso => { const [y, m, d] = String(iso).split('-'); return iso 
 function capNhatNghi(m) {
   const r = L.leaveStatus(dvHist, m.blocks, isoToText($('dvDate').value)), dot = r.dot ? 'Đợt ' + r.dot : 'đợt này';
   const lich = r.noSchedule ? ' Lịch đợt này chưa có trong lớp nên Sheet sẽ báo cần kiểm tra, chưa ra số tiền.' : '';
-  $('dvKhongThu').hidden = false; $('dvLuu').hidden = false; $('dvLuu').className = ''; $('dvKhongThu').className = '';
+  $('dvKhongThu').hidden = false; $('dvLuu').hidden = false; $('dvLuu').disabled = false; $('dvLuu').className = ''; $('dvKhongThu').className = '';
   if (r.state === 'da-dong') {
     $('dvStatus').textContent = 'Ngày này thuộc ' + dot + ', em đã đóng. Không thu gì thêm.';
     $('dvKhongThu').className = 'primary'; $('dvLuu').textContent = 'Vẫn tính tiền';
@@ -410,7 +411,7 @@ async function khongThuMove() {
   $('dvErr').textContent = 'Đang lưu…';
   try {
     await batchWrite(m.rows.map(r => ({ range: "'_BIEN_DONG_HS'!H" + r, values: [['khong-thu']] })));
-    $('duyet').close(); notice('Đã ghi nhận ' + m.name + ' nghỉ, không thu thêm.'); await loadMoves();
+    $('duyet').close(); await loadMoves(); notice('Đã ghi nhận ' + m.name + ' nghỉ, không thu thêm.');
   } catch (e) { $('dvErr').textContent = 'Không lưu được: ' + e.message; }
 }
 async function luuDuyet() {
@@ -423,8 +424,8 @@ async function luuDuyet() {
   try {
     await ghiDongMoi(input);
     $('duyet').close();
-    notice('Đã thêm ' + m.name + ' vào tab ' + input.tab + '. Số tiền sẽ hiện ở mục Cần thu sau khi Sheet tính xong.');
     await loadMoves();
+    notice('Đã thêm ' + m.name + ' vào tab ' + input.tab + '. Nếu chưa thấy số tiền ở mục Cần thu, đợi 1–2 phút rồi bấm Tải lại.');
   } catch (e) { $('dvErr').textContent = 'Không lưu được: ' + e.message; }
   $('dvLuu').disabled = false;
 }
