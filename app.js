@@ -522,13 +522,18 @@ function calRow(x) {
     el('div', { class: 'cal-line sub', textContent: L.fmt(x.total) + ' đ' + (x.book ? ' · ' + x.book : '') + (s ? ' · đã nộp ' + s.paid + '/' + s.total : '') })];
   const unpaid = c && String(c.data.dot) === x.dot ? c.data.items.filter(y => !y.paid) : [];
   const gone = unpaid.filter(y => sentOf(x.tab, x.dot, y.key)).length;
-  if (ackMap[L.ackKey(x.tab, x.dot)]) kids.push(el('div', { class: 'cal-line sent', textContent: 'Đã gửi tin cho lớp' }));
-  else if (gone) kids.push(el('div', { class: 'cal-line sent', textContent: 'Đã gửi ' + gone + '/' + unpaid.length + ' em chưa nộp' }));
+  if (gone && !ackMap[L.ackKey(x.tab, x.dot)]) kids.push(el('div', { class: 'cal-line sent', textContent: 'Đã gửi ' + gone + '/' + unpaid.length + ' em chưa nộp' }));
   // Many differences mean the class's weekdays are wrong rather than single sessions.
   const days = sched && sched.days && sched.days[x.tab];
   if (gaps.length > 3 && days && days.file !== days.schedule) kids.push(el('div', { class: 'warn-line', textContent: 'Lệch thứ học: file học phí tính ' + days.file + ', Schedule học ' + days.schedule + '. Ngày cuối đợt và hạn thu ở trên có thể sai.' }));
   else gaps.forEach(g => kids.push(el('div', { class: 'warn-line', textContent: L.dayText(g.day) + ': ' + GAP_TEXT[g.type] })));
-  return el('button', { class: 'class cal-row', onclick: () => { filter = 'can'; tab = 'thu'; openClass(x.tab); } }, kids);
+  // The tick sits outside the button that opens the class, and only for classes that are due or nearly due.
+  return el('div', { class: 'class cal-row' }, [
+    el('button', { class: 'cal-open', onclick: () => { filter = 'can'; tab = 'thu'; openClass(x.tab); } }, kids),
+    x.group === 'chua' ? '' : el('label', { class: 'ack' }, [
+      el('input', { type: 'checkbox', checked: !!ackMap[L.ackKey(x.tab, x.dot)], onchange: e => markClass(x.tab, x.dot, x.due, e.target.checked) }),
+      'Đã gửi tin thu đợt ' + x.dot + ' cho lớp']),
+    el('button', { class: 'quiet cal-book', textContent: x.book ? 'Đổi sách đợt ' + x.dot : 'Chọn sách đợt ' + x.dot, onclick: () => { tab = 'dot'; openClass(x.tab); loadBooks(); loadSchedule(); } })]);
 }
 function renderCal(box) {
   box.append(el('div', { class: 'page-title' }, [
@@ -796,7 +801,7 @@ function classTick() {
 }
 
 /* ---------- Đợt học: lessons, books, history ---------- */
-let bookList = null, bookDraft = null;
+let bookList = null, bookDraft = null, bookExtra = {};
 async function loadBooks() {
   if (bookList) return;
   try {
@@ -829,18 +834,21 @@ function bookPanel() {
   const draft = bookDraft && bookDraft.tab === cur.tab ? bookDraft.list : cur.books.slice();
   const price = name => { const b = (bookList || []).find(x => x.name === name); return b ? b.price : 0; };
   const sum = draft.reduce((a, n) => a + price(n), 0), fee = L.digits(cur.fee), changed = draft.join('|') !== cur.books.join('|');
-  const pickers = draft.map((value, k) => el('select', { 'aria-label': 'Sách ' + (k + 1), onchange: e => { const list = draft.slice(); list[k] = e.target.value; bookDraft = { tab: cur.tab, list }; render(); } },
+  // One box is enough for most đợt; the others appear only when filled or asked for.
+  const filled = draft.reduce((n, v, k) => (v ? k + 1 : n), 0), shown = Math.min(draft.length, Math.max(1, filled, bookExtra[cur.tab] || 0));
+  const pickers = draft.slice(0, shown).map((value, k) => el('select', { 'aria-label': 'Sách ' + (k + 1), onchange: e => { const list = draft.slice(); list[k] = e.target.value; bookDraft = { tab: cur.tab, list }; render(); } },
     [el('option', { value: '', textContent: k === 0 ? 'Không thu sách' : '(trống)' })].concat(
       // A value typed in the Sheet that is no longer in the catalogue stays selectable, so saving cannot lose it.
       (bookList || []).concat(value && !(bookList || []).some(b => b.name === value) ? [{ name: value, price: 0 }] : []).map(b => el('option', { value: b.name, textContent: b.name + (b.price ? ' · ' + L.fmt(b.price) + ' đ' : ''), selected: b.name === value })))));
   return el('div', { class: 'card panel' }, [
     el('h2', { class: 'panel-title', textContent: 'Sách thu cùng đợt ' + cur.nextDot }),
     bookList ? el('div', { class: 'books' }, pickers) : el('div', { class: 'sub', textContent: 'Đang đọc danh mục sách…' }),
+    bookList && shown < draft.length ? el('button', { class: 'quiet', textContent: '+ Thêm sách', onclick: () => { bookExtra[cur.tab] = shown + 1; render(); } }) : '',
     el('div', { class: 'sub', style: 'margin-top:8px', textContent: 'Học phí ' + L.fmt(fee) + ' đ + sách ' + L.fmt(sum) + ' đ = ' + L.fmt(fee + sum) + ' đ' }),
-    el('div', { class: 'acts' }, [
-      el('button', { class: 'primary', id: 'bookSave', textContent: 'Lưu sách', disabled: !changed, onclick: () => luuSach(draft) }),
-      changed ? el('button', { textContent: 'Huỷ', onclick: () => { bookDraft = null; render(); } }) : '']),
-    el('div', { class: 'sub', style: 'margin-top:6px', textContent: 'Em đã nộp không đổi. Em chưa nộp tự cập nhật số tiền sáng hôm sau, trừ ô đã sửa tay.' })]);
+    changed ? el('div', { class: 'acts' }, [
+      el('button', { class: 'primary', id: 'bookSave', textContent: 'Lưu sách', onclick: () => luuSach(draft) }),
+      el('button', { textContent: 'Huỷ', onclick: () => { bookDraft = null; delete bookExtra[cur.tab]; render(); } })]) : '',
+    changed ? el('div', { class: 'sub', style: 'margin-top:6px', textContent: 'Em đã nộp không đổi. Em chưa nộp tự cập nhật số tiền sáng hôm sau, trừ ô đã sửa tay.' }) : '']);
 }
 async function luuSach(list) {
   const name = cur.tab, btn = $('bookSave');
