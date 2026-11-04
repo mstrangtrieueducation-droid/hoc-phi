@@ -101,15 +101,16 @@ let classes = [], cur = null, curAt = 0, curFresh = false, loadSeq = 0, i = 0, s
 let view = 'home', tab = 'thu', filter = 'can', query = '', loadingAll = false, loadedCount = 0, loadTotal = 0;
 const picked = {}; // dates chosen but not yet ticked, so a quiet refresh cannot reset them to today
 let noticeText = '', noticeErr = false;
-const zaloItems = () => cur ? cur.items.filter(x => !x.paid) : [];
+const canThu = x => !x.paid && !L.deferred(x);
+const zaloItems = () => cur ? cur.items.filter(canThu) : [];
 const fullName = x => x.name + (x.eng ? ' (' + x.eng + ')' : '');
 const money = n => n ? L.fmt(n) + ' đ' : '';
 
 // A blank status with no date means not paid or not recorded yet (owner, 04/11/2026), so it must not read as "Chưa nộp".
 const chuaGhi = x => !x.paid && !x.trong && !x.date && !String(x.status || '').trim();
 function summarize(data) {
-  const paid = data.items.filter(x => x.paid), due = data.items.filter(x => !x.paid), blank = due.filter(chuaGhi);
-  return { paid: paid.length, total: data.items.length, got: paid.reduce((s, x) => s + (x.tienSheet || 0), 0),
+  const paid = data.items.filter(x => x.paid), due = data.items.filter(canThu), blank = due.filter(chuaGhi);
+  return { paid: paid.length, total: paid.length + due.length, got: paid.reduce((s, x) => s + (x.tienSheet || 0), 0),
     owe: due.reduce((s, x) => s + (x.amount || 0), 0), warn: due.filter(x => x.warn).length, none: due.filter(x => x.trong).length,
     blank: blank.length, blankOwe: blank.reduce((s, x) => s + (x.amount || 0), 0) };
 }
@@ -620,7 +621,7 @@ function calRow(x) {
     el('div', { class: 'cal-line' }, ['Thu đợt ' + x.dot + ', hạn ', el('strong', { textContent: dueText(x) })]),
     el('div', { class: 'cal-line sub', textContent: (x.start && x.end ? 'Đợt ' + prev + ' học ' + x.start + ' đến ' + x.end : '') }),
     el('div', { class: 'cal-line sub', textContent: L.fmt(x.total) + ' đ' + (x.book ? ' · ' + x.book : '') + (s ? ' · đã nộp ' + s.paid + '/' + s.total : '') })];
-  const unpaid = c && String(c.data.dot) === x.dot ? c.data.items.filter(y => !y.paid) : [];
+  const unpaid = c && String(c.data.dot) === x.dot ? c.data.items.filter(canThu) : [];
   const gone = unpaid.filter(y => sentOf(x.tab, x.dot, y.key)).length;
   if (gone && !ackMap[L.ackKey(x.tab, x.dot)]) kids.push(el('div', { class: 'cal-line sent', textContent: 'Đã gửi ' + gone + '/' + unpaid.length + ' em chưa nộp' }));
   // Many differences mean the class's weekdays are wrong rather than single sessions.
@@ -869,7 +870,7 @@ const dueMark = it => (sentIdx[dueCls(it) + '|' + DUE_DOT] || {})[it.key];
 /** Classes due for collection with someone not ticked as sent. left is null until the class has been read. */
 function chuaDanhDau() {
   return (cal ? cal.list : []).filter(x => (x.group === 'den' || x.group === 'qua') && !ackMap[L.ackKey(x.tab, x.dot)]).map(x => {
-    const c = store.get('hp_cls_' + x.tab), unpaid = c && String(c.data.dot) === x.dot ? c.data.items.filter(y => !y.paid) : null;
+    const c = store.get('hp_cls_' + x.tab), unpaid = c && String(c.data.dot) === x.dot ? c.data.items.filter(canThu) : null;
     return { x, total: unpaid ? unpaid.length : 0, left: unpaid ? L.notMarked(unpaid, sentIdx[x.tab + '|' + x.dot]) : null };
   }).filter(r => !r.left || r.left.length);
 }
@@ -1071,12 +1072,13 @@ function sentPanel() {
 }
 
 function renderThu(box) {
-  const groups = { can: cur.items.filter(x => !x.paid), ghi: cur.items.filter(chuaGhi), da: cur.items.filter(x => x.paid), xem: cur.items.filter(x => !x.paid && (x.warn || x.trong || x.gop || nhacOf(x))) };
+  const groups = { can: cur.items.filter(canThu), ghi: cur.items.filter(chuaGhi), da: cur.items.filter(x => x.paid), hoan: cur.items.filter(L.deferred), xem: cur.items.filter(x => canThu(x) && (x.warn || x.trong || x.gop || nhacOf(x))) };
+  if (filter === 'hoan' && !groups.hoan.length) filter = 'can';
   const chip = (id, label) => el('button', { textContent: label + ' ' + groups[id].length, 'aria-pressed': String(filter === id), onclick: () => { filter = id; render(); } });
   const before = cur.items.filter(x => x.prev && (x.prev.amount > 0 || x.prev.paid)).sort((a, b) => a.prev.paid - b.prev.paid);
   if (filter === 'truoc' && !before.length) filter = 'can';
   groups.truoc = before;
-  box.append(el('div', { class: 'filters' }, [chip('can', 'Chưa thu'), chip('ghi', 'Chưa ghi'), chip('xem', 'Cần xem lại'), chip('da', 'Đã nộp'),
+  box.append(el('div', { class: 'filters' }, [chip('can', 'Chưa thu'), chip('ghi', 'Chưa ghi'), chip('xem', 'Cần xem lại'), chip('da', 'Đã nộp'), groups.hoan.length ? chip('hoan', 'Chưa thu ngay') : '',
     before.length ? el('button', { textContent: 'Đợt ' + before[0].prev.dot + ' chưa nộp ' + before.filter(x => !x.prev.paid).length, 'aria-pressed': String(filter === 'truoc'), onclick: () => { filter = 'truoc'; render(); } }) : '']));
   const list = groups[filter];
   if (!list.length) { box.append(el('div', { class: 'empty', textContent: filter === 'can' ? 'Lớp này đã nộp đủ đợt ' + cur.dot + '.' : filter === 'da' ? 'Chưa có em nào nộp đợt ' + cur.dot + '.' : filter === 'ghi' ? 'Không có em nào chưa ghi.' : 'Không có em nào cần xem lại.' })); return; }
@@ -1129,9 +1131,9 @@ function feeRow(it) {
     : [el('span', { class: /chưa thu ngay/i.test(it.status) || chuaGhi(it) ? 'chip idle' : 'chip', textContent: it.status || (chuaGhi(it) ? 'Chưa ghi' : 'Chưa nộp') }), el('div', { class: 'fill' }), d, el('button', { class: 'tick', textContent: 'Đã nộp', onclick: () => tick(it, d.value) })];
   const sent = !it.paid && sentOf(cur.tab, cur.dot, it.key);
   return el('div', { class: 'row card' }, [
-    el('div', { class: 'r1' }, [el('span', { class: 'nm', textContent: fullName(it) }), el('span', { class: 'amt', textContent: money(it.amount) || 'Chưa có số' })]),
+    el('div', { class: 'r1' }, [el('span', { class: 'nm', textContent: fullName(it) }), el('span', { class: 'amt', textContent: money(it.amount) || (L.deferred(it) ? '' : 'Chưa có số') })]),
     el('div', { class: 'r2' }, r2),
-    it.paid ? '' : el('div', { class: 'r3' }, sent
+    it.paid || L.deferred(it) ? '' : el('div', { class: 'r3' }, sent
       ? [el('span', { class: 'sent', textContent: sentText(sent) }), (sentIdx[cur.tab + '|' + cur.dot] || {})[it.key] ? el('button', { class: 'quiet', textContent: 'Bỏ đánh dấu', onclick: () => markStudent(it, false) }) : '']
       : [el('button', { class: 'act', textContent: 'Đánh dấu đã gửi Zalo', onclick: () => markStudent(it, true) })]),
     discLine(it),
@@ -1139,7 +1141,7 @@ function feeRow(it) {
     it.gop && !it.paid ? el('div', { class: 'warn-line' }, ['Đã gộp đợt ' + it.gop.dot + ': ' + money(it.gop.amount) + (it.gop.blank ? ' vì đợt đó chưa ghi nộp hay chưa.' : ' vì đợt đó chưa nộp.'), el('button', { class: 'quiet', textContent: 'Đợt ' + it.gop.dot + ' đã nộp', onclick: () => tickPrev(it, d.value) })]) : '',
     prevDone[it.key] && it.prev && it.prev.paid && !it.paid ? el('div', { class: 'warn-line' }, ['Vừa ghi đợt ' + it.prev.dot + ' đã nộp ngày ' + it.prev.date + (it.prev.luu ? ' · đang lưu' : '') + '.', el('button', { class: 'quiet', textContent: 'Hoàn tác', onclick: () => boTickPrev(it) })]) : '',
     it.warn ? el('div', { class: 'warn-line' }, [it.warn, el('button', { class: 'quiet', textContent: 'Xem và sửa', onclick: () => moSua(it) })]) : '',
-    !it.warn && it.trong ? el('div', { class: 'warn-line' }, ['Chưa có tin hoặc số tiền đợt này.', el('button', { class: 'quiet', textContent: 'Nhập', onclick: () => moSua(it) })]) : '']);
+    !it.warn && it.trong && !L.deferred(it) ? el('div', { class: 'warn-line' }, ['Chưa có tin hoặc số tiền đợt này.', el('button', { class: 'quiet', textContent: 'Nhập', onclick: () => moSua(it) })]) : '']);
 }
 function localDate() { const d = new Date(), p = n => ('0' + n).slice(-2); return d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate()); }
 function tick(it, iso) {

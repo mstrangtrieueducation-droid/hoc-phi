@@ -511,6 +511,8 @@
     return idx;
   }
   const REMIND_AFTER = 7, REMIND_EVERY = 2;
+  /** The owner chose not to collect from this student this đợt, so nothing is due and nothing should nag. */
+  const deferred = x => !x.paid && /chưa thu ngay|chua thu ngay/i.test(String(x.status || ''));
   /** The log writes "dd/mm hh:mm" with no year: it is the latest such date not after today. */
   function sentDay(at, today) {
     const m = String(at).match(/^(\d{1,2})\/(\d{1,2})/);
@@ -524,7 +526,7 @@
    * the log existed have no send date, so ackDue (the due date of a ticked class) stands in and the row says so.
    */
   function remindDue(items, marks, today, ackDue) {
-    return (items || []).filter(x => !x.paid && !x.trong && x.amount > 0 && !/chưa thu ngay|chua thu ngay/i.test(x.status)).map(x => {
+    return (items || []).filter(x => !x.paid && !x.trong && x.amount > 0 && !deferred(x)).map(x => {
       const own = marks && marks[x.key], whole = marks && marks['*'];
       const known = [own, whole].filter(Boolean).map(m => sentDay(m.at, today)).filter(n => !isNaN(n));
       const from = known.length ? Math.max.apply(null, known) : Number(ackDue);
@@ -541,5 +543,5 @@
     return (students || []).filter(x => !(marks && marks[x.key]));
   }
 
-  return { remindDue, REMIND_AFTER, REMIND_EVERY, sentDay, notMarked, dayOf, dayText, dayNow, calendar, classKey, weekSessions, scheduleGaps, scheduleLessons, weekdays, ackKey, sentIndex, leaveStatus, classifyMoves, moveInputs, qrFromMessage, intakeDue, EXIT_ACCOUNT, NEW_TAB, EXIT_TAB, buildClass, dropGop, addGop, discInput, discText, discValue, planDiscount, locate, classRanges, freshRanges, freshAt, planPaid, planUnpaid, planOverride, findPeriodCol, colA1, quote, fmt, digits, clean, isPaid, todayText, ACTIVE };
+  return { deferred, remindDue, REMIND_AFTER, REMIND_EVERY, sentDay, notMarked, dayOf, dayText, dayNow, calendar, classKey, weekSessions, scheduleGaps, scheduleLessons, weekdays, ackKey, sentIndex, leaveStatus, classifyMoves, moveInputs, qrFromMessage, intakeDue, EXIT_ACCOUNT, NEW_TAB, EXIT_TAB, buildClass, dropGop, addGop, discInput, discText, discValue, planDiscount, locate, classRanges, freshRanges, freshAt, planPaid, planUnpaid, planOverride, findPeriodCol, colA1, quote, fmt, digits, clean, isPaid, todayText, ACTIVE };
 });
