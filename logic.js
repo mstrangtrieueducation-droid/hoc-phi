@@ -462,7 +462,7 @@
     });
     return idx;
   }
-  const REMIND_AFTER = 7;
+  const REMIND_AFTER = 7, REMIND_EVERY = 2;
   /** The log writes "dd/mm hh:mm" with no year: it is the latest such date not after today. */
   function sentDay(at, today) {
     const m = String(at).match(/^(\d{1,2})\/(\d{1,2})/);
@@ -471,7 +471,8 @@
     return day(y) > today + 1 ? day(y - 1) : day(y);
   }
   /**
-   * Students still owing REMIND_AFTER days after their message went out, or after their last reminder. Classes ticked before
+   * Students still owing REMIND_AFTER days after their message went out, then every REMIND_EVERY days; a marked reminder counts
+   * REMIND_EVERY days from itself. onCycle says whether today is one of those days, which the email uses. Classes ticked before
    * the log existed have no send date, so ackDue (the due date of a ticked class) stands in and the row says so.
    */
   function remindDue(items, marks, today, ackDue) {
@@ -479,8 +480,10 @@
       const own = marks && marks[x.key], whole = marks && marks['*'];
       const known = [own, whole].filter(Boolean).map(m => sentDay(m.at, today)).filter(n => !isNaN(n));
       const from = known.length ? Math.max.apply(null, known) : Number(ackDue);
-      if (!from || isNaN(from) || today - from < REMIND_AFTER) return null;
-      return { item: x, from, days: today - from, guess: !known.length, lan: (own && own.lan) || 0, blank: !x.date && !String(x.status || '').trim() };
+      if (!from || isNaN(from)) return null;
+      const wait = own && own.lan && sentDay(own.at, today) === from ? REMIND_EVERY : REMIND_AFTER;
+      if (today - from < wait) return null;
+      return { item: x, from, days: today - from, onCycle: (today - from - wait) % REMIND_EVERY === 0, guess: !known.length, lan: (own && own.lan) || 0, blank: !x.date && !String(x.status || '').trim() };
     }).filter(Boolean);
   }
 
@@ -490,5 +493,5 @@
     return (students || []).filter(x => !(marks && marks[x.key]));
   }
 
-  return { remindDue, REMIND_AFTER, sentDay, notMarked, dayOf, dayText, dayNow, calendar, classKey, weekSessions, scheduleGaps, scheduleLessons, weekdays, ackKey, sentIndex, leaveStatus, classifyMoves, moveInputs, qrFromMessage, intakeDue, EXIT_ACCOUNT, NEW_TAB, EXIT_TAB, buildClass, dropGop, addGop, classRanges, freshRanges, freshAt, planPaid, planUnpaid, planOverride, findPeriodCol, colA1, quote, fmt, digits, clean, isPaid, todayText, ACTIVE };
+  return { remindDue, REMIND_AFTER, REMIND_EVERY, sentDay, notMarked, dayOf, dayText, dayNow, calendar, classKey, weekSessions, scheduleGaps, scheduleLessons, weekdays, ackKey, sentIndex, leaveStatus, classifyMoves, moveInputs, qrFromMessage, intakeDue, EXIT_ACCOUNT, NEW_TAB, EXIT_TAB, buildClass, dropGop, addGop, classRanges, freshRanges, freshAt, planPaid, planUnpaid, planOverride, findPeriodCol, colA1, quote, fmt, digits, clean, isPaid, todayText, ACTIVE };
 });

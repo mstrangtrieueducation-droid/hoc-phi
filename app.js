@@ -811,13 +811,13 @@ function nhacLaiPanel(rows) {
       old.length ? el('div', { class: 'sub', style: 'margin-top:4px', textContent: 'Chưa ghi, xem sao kê trước (' + nhacText(old[0]) + '): ' + old.map(r => r.item.eng || r.item.name).join(', ') + '.' }) : '',
       el('div', { class: 'r2' }, [el('div', { class: 'fill' }),
         clear.length ? el('button', { class: 'quiet', textContent: 'Đã nhắc lại ' + clear.length + ' em chưa nộp', onclick: () => {
-          if (!confirm('Ghi đã nhắc lại ' + clear.length + ' em chưa nộp lớp ' + c.data.tab + ' hôm nay? Sau ' + L.REMIND_AFTER + ' ngày chưa nộp sẽ cảnh báo tiếp.')) return;
+          if (!confirm('Ghi đã nhắc lại ' + clear.length + ' em chưa nộp lớp ' + c.data.tab + ' hôm nay? Sau ' + L.REMIND_EVERY + ' ngày chưa nộp sẽ cảnh báo tiếp.')) return;
           logSent(c.data.tab, c.data.dot, clear.map(r => r.item), 'nhac-lai'); render(); } }) : '',
         el('button', { class: 'act', textContent: 'Mở Gửi Zalo', onclick: () => { tab = 'zalo'; filter = 'can'; openClass(c.data.tab); loadSent(); } })])]);
   };
   const all = rows.reduce((n, c) => n + c.list.length, 0), blank = rows.reduce((n, c) => n + c.list.filter(r => r.blank).length, 0);
   return [el('h2', { class: 'section', id: 'nhacLai', textContent: 'Gửi đã ' + L.REMIND_AFTER + ' ngày, chưa thấy nộp (' + (all - blank) + ' chưa nộp, ' + blank + ' chưa ghi)' }),
-    el('p', { class: 'sub', style: 'margin-bottom:8px', textContent: 'Chưa nộp thì nhắc lại rồi bấm "Đã nhắc lại", ' + L.REMIND_AFTER + ' ngày sau chưa nộp app cảnh báo tiếp. Chưa ghi có thể đã nộp, xem sao kê rồi tick. "Từ hạn thu" là lớp đã tick từ trước nên không có ngày gửi.' }),
+    el('p', { class: 'sub', style: 'margin-bottom:8px', textContent: 'Chưa nộp thì nhắc lại rồi bấm "Đã nhắc lại", ' + L.REMIND_EVERY + ' ngày sau chưa nộp app cảnh báo tiếp. Chưa ghi có thể đã nộp, xem sao kê rồi tick. "Từ hạn thu" là lớp đã tick từ trước nên không có ngày gửi.' }),
     el('div', { class: 'fee-list' }, rows.map(line))];
 }
 function nhacPanel(rows, due) {
