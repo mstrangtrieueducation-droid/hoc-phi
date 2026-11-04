@@ -294,6 +294,8 @@
     // "Đợt cần thu" (I) is left to its formula, which works the đợt out from the date.
     Object.assign(cells, { B: move.name, C: move.eng, F: move.kind === 'chuyen' ? 'Chuyển lớp' : 'Nghỉ học', H: date, X: move.from });
     if (move.kind === 'chuyen') cells.G = move.to; else cells.W = EXIT_ACCOUNT;
+    // A leaver who already paid can still owe for books: tuition is set to 0 on this row, so the total is the books alone.
+    if (form.onlyBooks) cells.O = 0;
     ['P', 'Q', 'R', 'S', 'T'].forEach((c, i) => { if (books[i]) cells[c] = books[i]; });
     return { tab: EXIT_TAB, firstDataRow: 4, nameCol: 'B', cells };
   }
@@ -417,6 +419,11 @@
     });
     return idx;
   }
+  /** Students with no "đã gửi" mark for a đợt. marks: one class|đợt entry of sentIndex; '*' is the whole-class tick. */
+  function notMarked(students, marks) {
+    if (marks && marks['*']) return [];
+    return (students || []).filter(x => !(marks && marks[x.key]));
+  }
 
-  return { dayOf, dayText, dayNow, calendar, classKey, weekSessions, scheduleGaps, scheduleLessons, weekdays, ackKey, sentIndex, leaveStatus, classifyMoves, moveInputs, qrFromMessage, intakeDue, EXIT_ACCOUNT, NEW_TAB, EXIT_TAB, buildClass, classRanges, freshRanges, freshAt, planPaid, planUnpaid, planOverride, findPeriodCol, colA1, quote, fmt, digits, clean, isPaid, todayText, ACTIVE };
+  return { notMarked, dayOf, dayText, dayNow, calendar, classKey, weekSessions, scheduleGaps, scheduleLessons, weekdays, ackKey, sentIndex, leaveStatus, classifyMoves, moveInputs, qrFromMessage, intakeDue, EXIT_ACCOUNT, NEW_TAB, EXIT_TAB, buildClass, classRanges, freshRanges, freshAt, planPaid, planUnpaid, planOverride, findPeriodCol, colA1, quote, fmt, digits, clean, isPaid, todayText, ACTIVE };
 });

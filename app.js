@@ -389,7 +389,7 @@ async function loadSent(force) {
     const [rows] = await batchGetAt(LOG_API, ['NhatKy!A2:H20000']);
     store.set('hp_sentlog', rows);
     sentRows = rows.concat(sentQueue); sentIdx = L.sentIndex(sentRows); sentAt = Date.now(); sentErr = '';
-    if (view === 'cal' || (view === 'class' && tab !== 'zalo')) render();
+    if (view === 'cal' || view === 'home' || view === 'moves' || (view === 'class' && tab !== 'zalo')) render();
   } catch (e) { sentErr = /permission|caller does not have/i.test(e.message) ? 'Tài khoản này chưa được chia sẻ file Nhật ký gửi Zalo, nên chưa lưu được ai đã gửi.' : 'Chưa đọc được nhật ký gửi: ' + e.message; renderNotices(); }
 }
 async function loadAck() {
@@ -397,6 +397,7 @@ async function loadAck() {
     const [rows] = await batchGet(["'XÁC NHẬN ĐÃ GỬI'!A4:G800"]), map = {};
     rows.forEach(r => { if (r[6]) map[r[6]] = (r[6] in map ? map[r[6]] : true) && /^true$/i.test(String(r[3])); });
     ackMap = map; store.set('hp_ack', map);
+    if (view === 'home' || view === 'cal') render();
   } catch (e) { console.error(e.message); }
 }
 function nowShort() { const d = new Date(), p = n => ('0' + n).slice(-2); return p(d.getDate()) + '/' + p(d.getMonth() + 1) + ' ' + p(d.getHours()) + ':' + p(d.getMinutes()); }
@@ -558,7 +559,7 @@ function renderCal(box) {
 }
 
 /* ---------- Student movements: new, transfer, leaving ---------- */
-let moves = null, movesLoading = false, books = [];
+let moves = null, movesLoading = false;
 const KIND = { moi: 'Học sinh mới', chuyen: 'Chuyển lớp', nghi: 'Nghỉ học' };
 const dayText = ms => { const d = new Date(ms), p = n => ('0' + n).slice(-2); return p(d.getDate()) + '/' + p(d.getMonth() + 1) + '/' + d.getFullYear(); };
 const isoOf = ms => { const d = new Date(ms), p = n => ('0' + n).slice(-2); return d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate()); };
@@ -568,8 +569,8 @@ async function loadMoves() {
   try {
     // The log tab appears at the first roster change, so a missing tab just means no events yet.
     const events = await batchGet(["'_BIEN_DONG_HS'!A2:I3000"]).then(x => x[0]).catch(e => { if (/Unable to parse range/.test(e.message)) return []; throw e; });
-    const [news, exits, bookRows] = await batchGet([L.quote(L.NEW_TAB) + '!A3:U199', L.quote(L.EXIT_TAB) + '!A4:X400', "'DANH_MUC_SACH'!A4:A80"]);
-    books = bookRows.map(r => r[0]).filter(x => x && !/^Không thu/.test(x));
+    const [news, exits, bookRows] = await batchGet([L.quote(L.NEW_TAB) + '!A3:U199', L.quote(L.EXIT_TAB) + '!A4:X400', "'DANH_MUC_SACH'!A4:B80"]);
+    bookList = readBookList(bookRows);
     moves = {
       list: L.classifyMoves(events, news.map(r => [r[1], r[2], r[3]]), exits.map(r => [r[1], r[2], r[5], r[6], r[23]]), Date.now()),
       due: L.intakeDue(news, exits), at: Date.now()
@@ -613,7 +614,9 @@ function dueRow(it) {
     el('div', { class: 'r1' }, [el('span', { class: 'nm', textContent: fullName(it) }), el('span', { class: 'amt', textContent: it.problem ? 'Cần kiểm tra' : money(it.amount) })]),
     el('div', { class: 'sub', style: 'margin-top:4px', textContent: KIND[it.kind] + ' · ' + it.cls }),
     it.problem ? el('div', { class: 'warn-line' }, ['Sheet chưa tính được số tiền (tab ' + it.tab + ', dòng ' + it.row + '): ' + (it.reason || 'bạn mở Sheet kiểm tra.')])
-      : el('div', { class: 'r2' }, [el('button', { textContent: 'Xem thiệp', disabled: !it.qr, onclick: () => moThiep(it) }), el('div', { class: 'fill' }), d, el('button', { class: 'tick', textContent: 'Đã nộp', onclick: () => tickDue(it, d.value) })])]);
+      : el('div', { class: 'r2' }, [el('button', { textContent: 'Xem thiệp', disabled: !it.qr, onclick: () => moThiep(it) }),
+        el('label', { class: 'ack', style: 'margin:0' }, [el('input', { type: 'checkbox', checked: !!dueMark(it), onchange: e => { logSent(dueCls(it), DUE_DOT, [it], e.target.checked ? 'da-gui' : 'bo'); render(); } }), dueMark(it) ? sentText(dueMark(it)) : 'Đã gửi tin']),
+        el('div', { class: 'fill' }), d, el('button', { class: 'tick', textContent: 'Đã nộp', onclick: () => tickDue(it, d.value) })])]);
 }
 function moThiep(it) {
   const img = $('thiepAnh'); img.removeAttribute('src');
@@ -657,20 +660,30 @@ function moDuyet(m) {
       .catch(() => { dvHist = []; capNhatNghi(m); });
   }
   $('dvDate').onchange = () => { if (m.kind === 'nghi' && dvHist) capNhatNghi(m); };
-  const options = [el('option', { value: '', textContent: '(Không chọn)' })].concat(books.map(b => el('option', { value: b, textContent: b })));
-  const wrap = $('dvBooks'); wrap.replaceChildren();
-  for (let k = 0; k < 5; k++) wrap.append(el('select', { 'aria-label': 'Sách ' + (k + 1) }, options.map(o => o.cloneNode(true))));
+  dvBookList = ['']; veSachDuyet(m);
   $('duyet').dataset.id = m.id; $('duyet').showModal();
 }
-let dvHist = null;
+let dvHist = null, dvBookList = [''];
+/** Books are optional for every kind of move: one box, "+ Thêm sách" up to the 5 columns the tabs have. */
+function veSachDuyet(m) {
+  const list = bookList || [], price = name => (list.find(b => b.name === name) || { price: 0 }).price;
+  const sum = dvBookList.reduce((a, n) => a + price(n), 0), wrap = $('dvBooks');
+  wrap.replaceChildren(...dvBookList.map((value, k) => el('select', { 'aria-label': 'Sách ' + (k + 1), onchange: e => { dvBookList[k] = e.target.value; veSachDuyet(m); } },
+    [el('option', { value: '', textContent: k === 0 ? 'Không có sách' : '(trống)' })].concat(list.map(b => el('option', { value: b.name, textContent: b.name + (b.price ? ' · ' + L.fmt(b.price) + ' đ' : ''), selected: b.name === value }))))));
+  if (dvBookList.length < 5) wrap.append(el('button', { class: 'act', type: 'button', textContent: '+ Thêm sách', onclick: () => { dvBookList.push(''); veSachDuyet(m); } }));
+  if (sum) wrap.append(el('div', { class: 'sub', textContent: 'Tiền sách ' + L.fmt(sum) + ' đ' }));
+  if (m.kind === 'nghi' && dvHist) capNhatNghi(m);
+}
 const isoToText = iso => { const [y, m, d] = String(iso).split('-'); return iso ? d + '/' + m + '/' + y : ''; };
 /** Shows what the leaving date means for this student, and which action comes first. */
 function capNhatNghi(m) {
   const r = L.leaveStatus(dvHist, m.blocks, isoToText($('dvDate').value)), dot = r.dot ? 'Đợt ' + r.dot : 'đợt này';
   const lich = r.noSchedule ? ' Lịch đợt này chưa có trong lớp nên Sheet sẽ báo cần kiểm tra, chưa ra số tiền.' : '';
+  const coSach = dvBookList.some(Boolean);
   $('dvKhongThu').hidden = false; $('dvLuu').hidden = false; $('dvLuu').disabled = false; $('dvLuu').className = ''; $('dvKhongThu').className = '';
+  $('dvKhongThu').textContent = coSach ? 'Đã đóng, chỉ thu tiền sách' : 'Đã đóng, không thu';
   if (r.state === 'da-dong') {
-    $('dvStatus').textContent = 'Ngày này thuộc ' + dot + ', em đã đóng. Không thu gì thêm.';
+    $('dvStatus').textContent = 'Ngày này thuộc ' + dot + ', em đã đóng học phí.' + (coSach ? ' Chỉ thu tiền sách đã chọn.' : ' Không thu gì thêm.');
     $('dvKhongThu').className = 'primary'; $('dvLuu').textContent = 'Vẫn tính tiền';
   } else if (r.state === 'chua-dong') {
     $('dvStatus').textContent = 'Ngày này thuộc ' + dot + ', em chưa đóng. Thu theo số buổi đã học.' + lich;
@@ -682,18 +695,19 @@ function capNhatNghi(m) {
 }
 async function khongThuMove() {
   const m = moves.list.find(x => x.id === $('duyet').dataset.id); if (!m) return;
+  if (dvBookList.some(Boolean)) return luuDuyet(true);
   $('dvErr').textContent = 'Đang lưu…';
   try {
     await batchWrite(m.rows.map(r => ({ range: "'_BIEN_DONG_HS'!H" + r, values: [['khong-thu']] })));
     $('duyet').close(); await loadMoves(); notice('Đã ghi nhận ' + m.name + ' nghỉ, không thu thêm.');
   } catch (e) { $('dvErr').textContent = 'Không lưu được: ' + e.message; }
 }
-async function luuDuyet() {
+async function luuDuyet(onlyBooks) {
   const m = moves.list.find(x => x.id === $('duyet').dataset.id); if (!m) return;
   const iso = $('dvDate').value;
   if (!iso) { $('dvErr').textContent = 'Hãy chọn ngày.'; return; }
-  const [y, mo, d] = iso.split('-'), bookList = [...$('dvBooks').querySelectorAll('select')].map(s => s.value).filter(Boolean);
-  const input = L.moveInputs(m, { date: d + '/' + mo + '/' + y, books: bookList });
+  const [y, mo, d] = iso.split('-');
+  const input = L.moveInputs(m, { date: d + '/' + mo + '/' + y, books: dvBookList.filter(Boolean), onlyBooks: onlyBooks === true });
   $('dvErr').textContent = 'Đang lưu…'; $('dvLuu').disabled = true;
   try {
     await ghiDongMoi(input);
@@ -737,21 +751,44 @@ function tile(value, label, alert, onclick) {
   return el('button', { class: alert && value ? 'tile alert' : 'tile', onclick }, [el('b', { textContent: String(value) }), el('span', { textContent: label })]);
 }
 function goTo(name) { view = name; $('lop').value = ''; notice(''); window.scrollTo(0, 0); render(); }
+const DUE_DOT = 'bien-dong'; // sent log's đợt column for new, transfer and leaving rows
+const dueCls = it => it.cls || it.tab;
+const dueMark = it => (sentIdx[dueCls(it) + '|' + DUE_DOT] || {})[it.key];
+/** Classes due for collection with someone not ticked as sent. left is null until the class has been read. */
+function chuaDanhDau() {
+  return (cal ? cal.list : []).filter(x => (x.group === 'den' || x.group === 'qua') && !ackMap[L.ackKey(x.tab, x.dot)]).map(x => {
+    const c = store.get('hp_cls_' + x.tab), unpaid = c && String(c.data.dot) === x.dot ? c.data.items.filter(y => !y.paid) : null;
+    return { x, total: unpaid ? unpaid.length : 0, left: unpaid ? L.notMarked(unpaid, sentIdx[x.tab + '|' + x.dot]) : null };
+  }).filter(r => !r.left || r.left.length);
+}
+function nhacPanel(rows, due) {
+  const line = r => el('div', { class: 'row card' }, [
+    el('div', { class: 'r1' }, [el('span', { class: 'nm', textContent: r.x.tab }), el('span', { class: 'sub', textContent: 'Thu đợt ' + r.x.dot + ', hạn ' + r.x.due })]),
+    el('div', { class: 'sub', style: 'margin-top:4px', textContent: !r.left ? 'Chưa tick đã gửi cả lớp.' : r.left.length === r.total ? 'Chưa đánh dấu em nào (' + r.total + ' em chưa nộp).' : 'Còn ' + r.left.length + '/' + r.total + ' em chưa đánh dấu: ' + r.left.map(y => y.eng || y.name).join(', ') + '.' }),
+    el('div', { class: 'r2' }, [el('div', { class: 'fill' }), el('button', { class: 'act', textContent: 'Mở Gửi Zalo', onclick: () => { tab = 'zalo'; filter = 'can'; openClass(r.x.tab); loadSent(); } })])]);
+  const dueLine = it => el('div', { class: 'row card' }, [
+    el('div', { class: 'r1' }, [el('span', { class: 'nm', textContent: fullName(it) }), el('span', { class: 'sub', textContent: KIND[it.kind] + ' · ' + it.cls })]),
+    el('div', { class: 'r2' }, [el('div', { class: 'fill' }), el('button', { class: 'act', textContent: 'Xem ở Biến động', onclick: () => goTo('moves') })])]);
+  return [el('h2', { class: 'section', id: 'nhacGui', textContent: 'Xem lại kẻo sót: chưa đánh dấu đã gửi Zalo (' + (rows.length + due.length) + ')' }),
+    el('p', { class: 'sub', style: 'margin-bottom:8px', textContent: 'Đã gửi rồi thì tick để hết nhắc. Chưa gửi thì mở lớp gửi nốt.' }),
+    el('div', { class: 'fee-list' }, rows.map(line).concat(due.map(dueLine)))];
+}
 function renderHome(box) {
   const known = classRows().filter(r => r.data).map(r => summarize(r.data)), add = f => known.reduce((n, s) => n + f(s), 0);
   const blankAll = add(s => s.blank), blankOwe = add(s => s.blankOwe), owe = add(s => s.owe), flagged = add(s => s.warn);
   const list = cal ? cal.list : [], now = list.filter(x => x.group === 'den' || x.group === 'qua'), soon = list.filter(x => x.group === 'sap');
-  const notSent = now.filter(x => !ackMap[L.ackKey(x.tab, x.dot)]), moveCount = moves ? moves.list.filter(m => !m.wait).length + moves.due.length : 0;
+  const notSent = chuaDanhDau(), dueUnsent = moves ? moves.due.filter(it => !it.problem && !dueMark(it)) : [], moveCount = moves ? moves.list.filter(m => !m.wait).length + moves.due.length : 0;
   box.append(
     el('div', { class: 'page-title' }, [
       el('div', {}, [el('h1', { textContent: 'Việc cần làm' }), el('div', { class: 'sub', textContent: updatedText() })]), updateButton()]),
     el('div', { class: 'tiles' }, [
       tile(now.length, 'Lớp đến hạn thu', true, openCal),
-      tile(notSent.length, 'Lớp chưa gửi tin', true, () => { const s = $('canLam'); if (s) s.scrollIntoView({ behavior: 'smooth' }); }),
+      tile(notSent.length + dueUnsent.length, 'Chưa đánh dấu đã gửi', true, () => { const s = $('nhacGui'); if (s) s.scrollIntoView({ behavior: 'smooth' }); }),
       tile(soon.length, 'Lớp sắp thu', false, openCal),
       tile(blankAll, 'Em chưa ghi nộp', false, () => { lopFilter = 'ghi'; goTo('lop'); }),
       tile(moveCount, 'Biến động cần xử lý', true, () => { goTo('moves'); if (!moves || Date.now() - moves.at > FRESH_MS) loadMoves(); })]),
     el('div', { class: 'stats' }, [stat(L.fmt(owe - blankOwe) + ' đ', 'Đã rõ chưa nộp'), stat(L.fmt(blankOwe) + ' đ', 'Chưa ghi, có thể đã nộp'), stat(String(flagged), 'Số tiền cần xem lại', flagged > 0)]));
+  if (notSent.length || dueUnsent.length) box.append(...nhacPanel(notSent, dueUnsent));
   if (now.length) box.append(el('h2', { class: 'section', id: 'canLam', textContent: 'Đến hạn thu (' + now.length + ')' }), el('div', { class: 'classes' }, now.map(calRow)));
   if (soon.length) box.append(el('h2', { class: 'section', textContent: 'Sắp thu (' + soon.length + ')' }), el('div', { class: 'classes' }, soon.map(calRow)));
   if (!now.length && !soon.length) box.append(el('div', { class: 'empty', textContent: cal ? 'Chưa có lớp nào đến hạn hoặc sắp thu.' : 'Đang đọc lịch thu…' }));
@@ -816,11 +853,12 @@ function classTick() {
 
 /* ---------- Đợt học: lessons, books, history ---------- */
 let bookList = null, bookDraft = null, bookExtra = {};
+const readBookList = rows => rows.filter(r => r[0] && !/^Không thu/.test(r[0])).map(r => ({ name: String(r[0]), price: L.digits(r[1]) }));
 async function loadBooks() {
   if (bookList) return;
   try {
     const [rows] = await batchGet(["'DANH_MUC_SACH'!A4:B80"]);
-    bookList = rows.filter(r => r[0] && !/^Không thu/.test(r[0])).map(r => ({ name: String(r[0]), price: L.digits(r[1]) }));
+    bookList = readBookList(rows);
     if (view === 'class' && tab === 'dot') render();
   } catch (e) { notice('Chưa đọc được danh mục sách: ' + e.message, true); }
 }
