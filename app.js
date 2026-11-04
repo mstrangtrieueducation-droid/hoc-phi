@@ -90,10 +90,13 @@ const zaloItems = () => cur ? cur.items.filter(x => !x.paid) : [];
 const fullName = x => x.name + (x.eng ? ' (' + x.eng + ')' : '');
 const money = n => n ? L.fmt(n) + ' đ' : '';
 
+// A blank status with no date means not paid or not recorded yet (owner, 04/11/2026), so it must not read as "Chưa nộp".
+const chuaGhi = x => !x.paid && !x.trong && !x.date && !String(x.status || '').trim();
 function summarize(data) {
-  const paid = data.items.filter(x => x.paid), due = data.items.filter(x => !x.paid);
+  const paid = data.items.filter(x => x.paid), due = data.items.filter(x => !x.paid), blank = due.filter(chuaGhi);
   return { paid: paid.length, total: data.items.length, got: paid.reduce((s, x) => s + (x.tienSheet || 0), 0),
-    owe: due.reduce((s, x) => s + (x.amount || 0), 0), warn: due.filter(x => x.warn).length, none: due.filter(x => x.trong).length };
+    owe: due.reduce((s, x) => s + (x.amount || 0), 0), warn: due.filter(x => x.warn).length, none: due.filter(x => x.trong).length,
+    blank: blank.length, blankOwe: blank.reduce((s, x) => s + (x.amount || 0), 0) };
 }
 
 /* ---------- Reading ---------- */
@@ -478,8 +481,9 @@ async function loadSchedule(force) {
         L.weekSessions(a, d, m, toggles).filter(s => s.day >= w.from && s.day <= w.to).forEach(s => { (byClass[s.cls] = byClass[s.cls] || []).push(s); });
       });
     }
-    const gaps = {}, days = {}, offs = {};
+    const gaps = {}, days = {}, offs = {}, sessions = {};
     tabs.forEach(t => {
+      sessions[t] = (byClass[L.classKey(t)] || []).map(s => ({ day: s.day, off: s.off }));
       const first = lessons[t].length ? Math.min(...lessons[t]) : Infinity;
       // A day with a second session still running is not a day off, as in scheduleGaps.
       const all = byClass[L.classKey(t)] || [], running = new Set(all.filter(s => !s.off).map(s => s.day));
@@ -490,7 +494,7 @@ async function loadSchedule(force) {
       const from = Math.min(...lessons[t]), to = Math.max(...weeks.map(w => w.to));
       days[t] = { file: L.weekdays(lessons[t]), schedule: L.weekdays((byClass[L.classKey(t)] || []).filter(s => !s.off && s.day >= from && s.day <= to).map(s => s.day)) };
     });
-    sched = { gaps, days, offs, weeks: weeks.length, last: weeks.length ? Math.max(...weeks.map(w => w.to)) : 0, at: Date.now() };
+    sched = { gaps, days, offs, sessions, weeks: weeks.length, last: weeks.length ? Math.max(...weeks.map(w => w.to)) : 0, at: Date.now() };
     store.set('hp_sched', sched);
   } catch (e) {
     sched = { error: /permission|caller does not have/i.test(e.message) ? 'Tài khoản này chưa có quyền xem file Schedule.' : 'Chưa đọc được Schedule: ' + e.message };
@@ -507,9 +511,7 @@ const GAP_TEXT = {
   thieu: 'file học phí tính một buổi, nhưng Schedule không có lớp này',
   them: 'Schedule có học, nhưng file học phí không tính buổi này'
 };
-// Owner's decision on 04/11/2026: these classes take the Schedule's weekdays when this đợt rolls over, so the difference until then is expected.
-const DOI_DOT_SAU = { 'KIDS 10': '12', 'FIGHTER 6': '9' };
-const gapsToShow = x => (sched && sched.gaps && sched.gaps[x.tab] && DOI_DOT_SAU[x.tab] !== x.dot ? sched.gaps[x.tab] : []);
+const gapsToShow = x => (sched && sched.gaps && sched.gaps[x.tab]) || [];
 function calRow(x) {
   const c = store.get('hp_cls_' + x.tab), s = c && String(c.data.dot) === x.dot ? summarize(c.data) : null, gaps = gapsToShow(x);
   const chipClass = x.group === 'den' || x.group === 'qua' ? 'chip' : x.group === 'sap' ? 'chip warn-soft' : 'chip idle';
@@ -524,7 +526,6 @@ function calRow(x) {
   else if (gone) kids.push(el('div', { class: 'cal-line sent', textContent: 'Đã gửi ' + gone + '/' + unpaid.length + ' em chưa nộp' }));
   // Many differences mean the class's weekdays are wrong rather than single sessions.
   const days = sched && sched.days && sched.days[x.tab];
-  if (DOI_DOT_SAU[x.tab] === x.dot && days) kids.push(el('div', { class: 'cal-line sub', textContent: 'Đợt đang học giữ nguyên ngày. Từ đợt tới học ' + days.schedule + ' theo Schedule.' }));
   if (gaps.length > 3 && days && days.file !== days.schedule) kids.push(el('div', { class: 'warn-line', textContent: 'Lệch thứ học: file học phí tính ' + days.file + ', Schedule học ' + days.schedule + '. Ngày cuối đợt và hạn thu ở trên có thể sai.' }));
   else gaps.forEach(g => kids.push(el('div', { class: 'warn-line', textContent: L.dayText(g.day) + ': ' + GAP_TEXT[g.type] })));
   return el('button', { class: 'class cal-row', onclick: () => { filter = 'can'; tab = 'thu'; openClass(x.tab); } }, kids);
@@ -735,14 +736,15 @@ function renderHome(box) {
   const rows = classes.map(name => { const c = store.get('hp_cls_' + name); return { name, data: c && c.data }; });
   const known = rows.filter(r => r.data).map(r => ({ name: r.name, data: r.data, s: summarize(r.data) }));
   const owe = known.reduce((a, r) => a + r.s.owe, 0), left = known.reduce((a, r) => a + r.s.total - r.s.paid, 0), flagged = known.reduce((a, r) => a + r.s.warn, 0);
-  const at = store.get('hp_all_at');
+  const at = store.get('hp_all_at'), blankAll = known.reduce((a, r) => a + r.s.blank, 0), blankOwe = known.reduce((a, r) => a + r.s.blankOwe, 0);
   box.append(
     el('div', { class: 'page-title' }, [
       el('div', {}, [el('h1', { textContent: 'Tổng quan các lớp' }),
         el('div', { class: 'sub', textContent: loadingAll ? 'Đang cập nhật ' + loadedCount + ' / ' + loadTotal + ' lớp, vẫn bấm vào lớp được…' : at ? 'Cập nhật lúc ' + new Date(at).toLocaleString('vi-VN', { hour: '2-digit', minute: '2-digit', day: '2-digit', month: '2-digit' }) : 'Chưa đọc đủ các lớp' })]),
       el('button', { textContent: loadingAll ? 'Đang cập nhật…' : 'Cập nhật tất cả', disabled: loadingAll, onclick: () => loadAll() })]),
     dueBanner(),
-    el('div', { class: 'stats' }, [stat(L.fmt(owe) + ' đ', 'Còn phải thu đợt này'), stat(String(left), 'Học sinh chưa nộp'), stat(String(flagged), 'Số tiền cần xem lại', flagged > 0)]));
+    el('div', { class: 'stats' }, [stat(L.fmt(owe) + ' đ', 'Còn phải thu đợt này'), stat(String(left), 'Học sinh chưa nộp hoặc chưa ghi'), stat(String(flagged), 'Số tiền cần xem lại', flagged > 0)]),
+    blankAll ? el('div', { class: 'sub', style: 'margin:-8px 0 16px', textContent: 'Trong đó ' + blankAll + ' em (' + L.fmt(blankOwe) + ' đ) chưa ghi: có thể đã nộp mà chưa tick, nên số thực phải thu có thể thấp hơn.' }) : '');
   const q = el('input', { class: 'search', type: 'search', value: query, placeholder: 'Tìm lớp, ví dụ KIDS 31', 'aria-label': 'Tìm lớp',
     oninput: e => { query = e.target.value; const g = $('grid'); if (g) fillGrid(g, rows); } });
   const grid = el('div', { class: 'classes', id: 'grid' });
@@ -805,14 +807,21 @@ async function loadBooks() {
 }
 function renderDot(box) {
   if (!cur.history) { box.append(el('div', { class: 'empty', textContent: 'Đang lấy chi tiết đợt, bấm ↻ nếu chưa thấy.' })); return; }
-  const today = L.dayNow(new Date()), lessons = cur.lessons, learned = lessons.filter(d => d <= today).length, off = (sched && sched.offs && sched.offs[cur.tab]) || [];
-  const gapDays = {}; ((sched && sched.gaps && sched.gaps[cur.tab]) || []).forEach(g => { gapDays[g.day] = g.type; });
-  const learning = Number(cur.nextDot) - 1;
+  // Same source as the class's date formula: the previous đợt's history row, with B4 only as the fallback.
+  const before = cur.history.find(h => Number(h.dot) === Number(cur.nextDot) - 1), prevEnd = L.dayOf(before && before.to ? before.to : cur.prevEnd);
+  const today = L.dayNow(new Date()), off = (sched && sched.offs && sched.offs[cur.tab]) || [];
+  const useSchedule = sched && sched.sessions && sched.last && !isNaN(prevEnd);
+  // Dates follow the Schedule; the file's plan only fills weeks the Schedule has not reached.
+  const list = useSchedule ? L.scheduleLessons(prevEnd, cur.lessons.length || Number(cur.sessions) || 20, sched.sessions[cur.tab], sched.last, cur.lessons) : cur.lessons.map(day => ({ day, known: false }));
+  const learned = list.filter(x => x.known && x.day <= today).length, learning = Number(cur.nextDot) - 1, first = list[0], last = list[list.length - 1];
+  const differs = useSchedule && last && !isNaN(L.dayOf(cur.end)) && last.day !== L.dayOf(cur.end);
   box.append(el('div', { class: 'card panel' }, [
     el('h2', { class: 'panel-title', textContent: 'Đợt ' + learning + ' đang học' }),
-    el('div', { class: 'sub', textContent: (cur.start && cur.end ? cur.start + ' đến ' + cur.end + ' · ' : '') + 'đã học ' + learned + '/' + lessons.length + ' buổi' + (lessons.length ? ' · ' + L.weekdays(lessons) : '') }),
+    el('div', { class: 'sub', textContent: (first && last ? L.dayText(first.day) + ' đến ' + L.dayText(last.day) + ' · ' : '') + 'đã học ' + learned + '/' + list.length + ' buổi' }),
     el('div', { class: 'sub', textContent: 'Thu đợt ' + cur.nextDot + ': hạn ' + cur.dueDate + (cur.dueState ? ' · ' + cur.dueState : '') }),
-    el('ol', { class: 'lessons' }, lessons.map(d => el('li', { class: (d <= today ? 'past' : '') + (gapDays[d] ? ' gap' : ''), textContent: L.dayText(d).slice(0, 5) + ' ' + L.weekdays([d]) + (gapDays[d] === 'nghi' ? ' (Schedule nghỉ)' : '') }))),
+    differs ? el('div', { class: 'warn-line', textContent: 'Theo Schedule đợt này hết ' + L.dayText(last.day) + ', file học phí tính hết ' + cur.end + '. Hạn thu đang theo file.' }) : '',
+    el('ol', { class: 'lessons' }, list.map(x => el('li', { class: (x.day <= today ? 'past' : '') + (x.known ? '' : ' planned'), textContent: L.dayText(x.day).slice(0, 5) + ' ' + L.weekdays([x.day]) }))),
+    el('div', { class: 'sub', textContent: useSchedule ? 'Theo Schedule đến tuần ' + L.dayText(sched.last) + '. Chữ nghiêng là dự kiến.' : 'Đang đối chiếu Schedule, tạm hiện ngày dự kiến của file.' }),
     off.length ? el('div', { class: 'sub', textContent: 'Schedule ghi nghỉ: ' + off.map(d => L.dayText(d).slice(0, 5)).join(', ') }) : '']));
   box.append(bookPanel(), historyPanel(), sentPanel());
 }
@@ -859,18 +868,18 @@ function sentPanel() {
 }
 
 function renderThu(box) {
-  const groups = { can: cur.items.filter(x => !x.paid), da: cur.items.filter(x => x.paid), xem: cur.items.filter(x => !x.paid && (x.warn || x.trong)) };
+  const groups = { can: cur.items.filter(x => !x.paid), ghi: cur.items.filter(chuaGhi), da: cur.items.filter(x => x.paid), xem: cur.items.filter(x => !x.paid && (x.warn || x.trong)) };
   const chip = (id, label) => el('button', { textContent: label + ' ' + groups[id].length, 'aria-pressed': String(filter === id), onclick: () => { filter = id; render(); } });
-  box.append(el('div', { class: 'filters' }, [chip('can', 'Chưa nộp'), chip('xem', 'Cần xem lại'), chip('da', 'Đã nộp')]));
+  box.append(el('div', { class: 'filters' }, [chip('can', 'Chưa thu'), chip('ghi', 'Chưa ghi'), chip('xem', 'Cần xem lại'), chip('da', 'Đã nộp')]));
   const list = groups[filter];
-  if (!list.length) { box.append(el('div', { class: 'empty', textContent: filter === 'can' ? 'Lớp này đã nộp đủ đợt ' + cur.dot + '.' : filter === 'da' ? 'Chưa có em nào nộp đợt ' + cur.dot + '.' : 'Không có em nào cần xem lại.' })); return; }
+  if (!list.length) { box.append(el('div', { class: 'empty', textContent: filter === 'can' ? 'Lớp này đã nộp đủ đợt ' + cur.dot + '.' : filter === 'da' ? 'Chưa có em nào nộp đợt ' + cur.dot + '.' : filter === 'ghi' ? 'Không có em nào chưa ghi.' : 'Không có em nào cần xem lại.' })); return; }
   box.append(el('div', { class: 'fee-list' }, list.map(feeRow)));
 }
 function feeRow(it) {
   const d = el('input', { type: 'date', value: picked[it.key] || localDate(), max: localDate(), 'aria-label': 'Ngày nộp của ' + it.name, oninput: e => { picked[it.key] = e.target.value; } });
   const r2 = it.paid
     ? [el('span', { class: 'chip ok', textContent: 'Đã nộp ' + it.date + (it.dangLuu ? ' · đang lưu' : '') }), el('div', { class: 'fill' }), el('button', { class: 'quiet', textContent: 'Bỏ tick', onclick: () => boTick(it) })]
-    : [el('span', { class: /chưa thu ngay/i.test(it.status) ? 'chip idle' : 'chip', textContent: it.status || 'Chưa nộp' }), el('div', { class: 'fill' }), d, el('button', { class: 'tick', textContent: 'Đã nộp', onclick: () => tick(it, d.value) })];
+    : [el('span', { class: /chưa thu ngay/i.test(it.status) || chuaGhi(it) ? 'chip idle' : 'chip', textContent: it.status || (chuaGhi(it) ? 'Chưa ghi' : 'Chưa nộp') }), el('div', { class: 'fill' }), d, el('button', { class: 'tick', textContent: 'Đã nộp', onclick: () => tick(it, d.value) })];
   const sent = !it.paid && sentOf(cur.tab, cur.dot, it.key);
   return el('div', { class: 'row card' }, [
     el('div', { class: 'r1' }, [el('span', { class: 'nm', textContent: fullName(it) }), el('span', { class: 'amt', textContent: money(it.amount) || 'Chưa có số' })]),
@@ -902,7 +911,7 @@ function renderZalo(box) {
   const pick = k => { i = k; step = 0; render(); };
   const people = el('div', { class: 'people card', role: 'list' }, items.map((x, k) => el('button', { 'data-key': x.key, 'aria-current': String(k === i), onclick: () => pick(k) }, [
     el('span', { class: 'n', textContent: (k + 1) + '. ' + fullName(x) }),
-    x.trong ? el('span', { class: 'm none', textContent: 'chưa có tin' }) : x.warn && !sentTo(x) ? el('span', { class: 'm warn', textContent: 'xem lại' }) : sentTo(x) ? el('span', { class: 'm done', textContent: 'đã gửi' }) : ''])));
+    x.trong ? el('span', { class: 'm none', textContent: 'chưa có tin' }) : x.warn && !sentTo(x) ? el('span', { class: 'm warn', textContent: 'xem lại' }) : sentTo(x) ? el('span', { class: 'm done', textContent: 'đã gửi' }) : chuaGhi(x) ? el('span', { class: 'm none', textContent: 'chưa ghi' }) : ''])));
   const sel = el('select', { id: 'chon', 'aria-label': 'Chọn học sinh', onchange: e => pick(+e.target.value) },
     items.map((x, k) => el('option', { value: String(k), textContent: (k + 1) + '. ' + fullName(x) + (x.trong ? ' – chưa có tin' : sentTo(x) ? ' – đã gửi' : x.warn ? ' – xem lại' : '') })));
   sel.value = String(i);
@@ -912,6 +921,7 @@ function renderZalo(box) {
     sel,
     el('div', { class: 'who' }, [el('b', { textContent: fullName(it) }), it.rieng ? el('span', { class: 'tag', textContent: 'đã sửa riêng' }) : '', el('button', { class: 'quiet', textContent: 'Sửa riêng', onclick: () => moSua(it) })]),
     it.warn ? el('div', { class: 'warn-line', style: 'margin:0 0 8px' }, [it.warn]) : '',
+    chuaGhi(it) ? el('div', { class: 'warn-line', style: 'margin:0 0 8px' }, ['Em này chưa ghi nộp hay chưa. Xem sao kê trước khi gửi, đã nộp thì tick ở tab Thu tiền.']) : '',
     el('div', { class: 'r3' }, mine
       ? [el('span', { class: 'sent', textContent: sentText(mine) }), own ? el('button', { class: 'quiet', textContent: 'Bỏ đánh dấu', onclick: () => markStudent(it, false) }) : '']
       : [el('button', { class: 'quiet', textContent: 'Đánh dấu đã gửi', onclick: () => markStudent(it, true) })]),

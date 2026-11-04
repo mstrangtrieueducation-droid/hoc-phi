@@ -101,7 +101,7 @@
     const label = name => { let out = ''; top.forEach(r => (r || []).forEach((v, c) => { if (v === name && !out) out = String(r[c + 1] || ''); })); return out; };
     const book = n => { const v = label('Tên sách/tài liệu ' + n).trim(); return v === '0' ? '' : v; };
     return { tab, lop: 'LỚP ' + tab, dot, statusCol, items, nextDot: label('Đợt học cần thu'), dueDate: label('Ngày cần thu tiền'), dueState: label('Trạng thái thu tiền'),
-      start: label('Ngày đầu đợt đã qua'), end: label('Ngày kết thúc đợt đã qua'), sessions: label('Số buổi đợt mới'), fee: label('Học phí đợt mới'),
+      prevEnd: label('Ngày kết thúc đợt ngay trước đợt đã qua'), start: label('Ngày đầu đợt đã qua'), end: label('Ngày kết thúc đợt đã qua'), sessions: label('Số buổi đợt mới'), fee: label('Học phí đợt mới'),
       bookTotal: label('Tổng tiền sách/tài liệu'), total: label('Tổng cần thu'), books: [1, 2, 3, 4, 5].map(book),
       lessons: (raw.lessons || []).map(r => dayOf((r || [])[0])).filter(n => !isNaN(n)), history: pastDots(hist, headRow) };
   }
@@ -392,6 +392,18 @@
     return [...new Set((days || []).map(n => (n + 3) % 7))].sort((a, b) => a - b).map(k => WEEKDAY[k]).join(', ');
   }
 
+  /**
+   * The đợt's lessons as the Schedule has them: real sessions after the previous đợt ended, then the file's planned
+   * days for weeks the Schedule does not have yet. Each is { day, known }, known meaning it came from the Schedule.
+   */
+  function scheduleLessons(prevEnd, count, sessions, lastWeekEnd, fileLessons) {
+    const off = new Map();
+    (sessions || []).forEach(s => off.set(s.day, off.has(s.day) ? off.get(s.day) && s.off : s.off));
+    const known = [...off.keys()].filter(d => !off.get(d) && d > prevEnd).sort((a, b) => a - b).slice(0, count).map(day => ({ day, known: true }));
+    const planned = (fileLessons || []).filter(d => d > lastWeekEnd).map(day => ({ day, known: false }));
+    return known.concat(planned).slice(0, count);
+  }
+
   /** Same key as hp_orAckKey_ in the Apps Script reminder, e.g. 'kids33|6'. */
   const ackKey = (tab, dot) => ascii(tab).toLowerCase().replace(/\s+/g, '') + '|' + Number(dot);
 
@@ -406,5 +418,5 @@
     return idx;
   }
 
-  return { dayOf, dayText, dayNow, calendar, classKey, weekSessions, scheduleGaps, weekdays, ackKey, sentIndex, leaveStatus, classifyMoves, moveInputs, qrFromMessage, intakeDue, EXIT_ACCOUNT, NEW_TAB, EXIT_TAB, buildClass, classRanges, freshRanges, freshAt, planPaid, planUnpaid, planOverride, findPeriodCol, colA1, quote, fmt, digits, clean, isPaid, todayText, ACTIVE };
+  return { dayOf, dayText, dayNow, calendar, classKey, weekSessions, scheduleGaps, scheduleLessons, weekdays, ackKey, sentIndex, leaveStatus, classifyMoves, moveInputs, qrFromMessage, intakeDue, EXIT_ACCOUNT, NEW_TAB, EXIT_TAB, buildClass, classRanges, freshRanges, freshAt, planPaid, planUnpaid, planOverride, findPeriodCol, colA1, quote, fmt, digits, clean, isPaid, todayText, ACTIVE };
 });
