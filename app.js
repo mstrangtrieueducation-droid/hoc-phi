@@ -481,7 +481,9 @@ async function loadSchedule(force) {
     const gaps = {}, days = {}, offs = {};
     tabs.forEach(t => {
       const first = lessons[t].length ? Math.min(...lessons[t]) : Infinity;
-      offs[t] = (byClass[L.classKey(t)] || []).filter(s => s.off && s.day >= first).map(s => s.day).sort((a, b) => a - b);
+      // A day with a second session still running is not a day off, as in scheduleGaps.
+      const all = byClass[L.classKey(t)] || [], running = new Set(all.filter(s => !s.off).map(s => s.day));
+      offs[t] = [...new Set(all.filter(s => s.off && s.day >= first && !running.has(s.day)).map(s => s.day))].sort((a, b) => a - b);
       const g = L.scheduleGaps(lessons[t], byClass[L.classKey(t)], weeks);
       if (!g.length) return;
       gaps[t] = g;
