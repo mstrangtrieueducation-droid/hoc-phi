@@ -176,11 +176,11 @@ async function loadAll(auto) {
       const part = names.slice(k, k + GROUP);
       await readGroup(part, kho);
       loadedCount += part.length;
-      if (view === 'home' && !homeBusy()) render();
+      if ((view === 'home' || view === 'lop') && !homeBusy()) render();
     }
     store.set('hp_all_at', Date.now());
   } catch (e) { notice('Chưa đọc xong các lớp: ' + e.message, true); }
-  loadingAll = false; if (view === 'home' && !homeBusy()) render();
+  loadingAll = false; if ((view === 'home' || view === 'lop') && !homeBusy()) render();
 }
 
 /* ---------- Paid ticks: saved in the browser first, then one batch per class ---------- */
@@ -362,8 +362,8 @@ function showLogin(again) { $('login').hidden = false; $('app').hidden = true; $
 function st(s, err) { const n = $('st'); if (n) { n.textContent = s; n.style.color = err ? 'var(--bad)' : 'var(--ok)'; } }
 function render() {
   const box = $('view'); box.replaceChildren();
-  $('reload').setAttribute('aria-label', view === 'home' ? 'Tải lại tất cả các lớp' : 'Tải lại số mới của lớp');
-  if (view === 'home') renderHome(box); else if (view === 'moves') renderMoves(box); else if (view === 'cal') renderCal(box); else renderClass(box);
+  [['navHome', 'home'], ['btnCal', 'cal'], ['navLop', 'lop'], ['btnMoves', 'moves']].forEach(([id, v]) => $(id).setAttribute('aria-current', String(view === v || (v === 'lop' && view === 'class'))));
+  if (view === 'home') renderHome(box); else if (view === 'lop') renderLop(box); else if (view === 'moves') renderMoves(box); else if (view === 'cal') renderCal(box); else renderClass(box);
   const n = moves ? moves.list.filter(m => !m.wait).length + moves.due.length : 0;
   $('btnMoves').textContent = n ? 'Biến động (' + n + ')' : 'Biến động';
   const dueNow = cal ? cal.list.filter(x => x.group === 'den' || x.group === 'qua').length : 0;
@@ -456,7 +456,7 @@ async function loadCal(force) {
     cal = { list: L.calendar(rows), synced: String(((synced || [])[0] || [])[0] || ''), at: Date.now() };
     store.set('hp_cal', cal);
   } catch (e) { notice('Chưa đọc được lịch thu: ' + e.message, true); }
-  calLoading = false; if (view === 'cal' || (view === 'home' && !homeBusy())) render();
+  calLoading = false; if (view === 'cal' || ((view === 'home' || view === 'lop') && !homeBusy())) render();
 }
 async function loadSchedule(force) {
   if (schedLoading || !cal || (!force && sched && !sched.error && Date.now() - sched.at < 1800000)) return;
@@ -501,7 +501,7 @@ async function loadSchedule(force) {
   }
   schedLoading = false; if (view === 'cal') render();
 }
-function openCal() { view = 'cal'; $('lop').value = ''; notice(''); render(); loadCal().then(() => loadSchedule()); }
+function openCal() { goTo('cal'); loadCal().then(() => loadSchedule()); }
 function dueText(x) {
   const d = L.dayOf(x.due) - L.dayNow(new Date());
   return x.due + (d === 0 ? ' (hôm nay)' : d > 0 ? ' (còn ' + d + ' ngày)' : ' (đã qua ' + -d + ' ngày)');
@@ -527,13 +527,15 @@ function calRow(x) {
   const days = sched && sched.days && sched.days[x.tab];
   if (gaps.length > 3 && days && days.file !== days.schedule) kids.push(el('div', { class: 'warn-line', textContent: 'Lệch thứ học: file học phí tính ' + days.file + ', Schedule học ' + days.schedule + '. Ngày cuối đợt và hạn thu ở trên có thể sai.' }));
   else gaps.forEach(g => kids.push(el('div', { class: 'warn-line', textContent: L.dayText(g.day) + ': ' + GAP_TEXT[g.type] })));
-  // The tick sits outside the button that opens the class, and only for classes that are due or nearly due.
-  return el('div', { class: 'class cal-row' }, [
-    el('button', { class: 'cal-open', onclick: () => { filter = 'can'; tab = 'thu'; openClass(x.tab); } }, kids),
+  const go = t => () => { tab = t; filter = 'can'; openClass(x.tab); if (t === 'dot') { loadBooks(); loadSchedule(); } if (t === 'zalo') loadSent(); };
+  return el('div', { class: 'class cal-row' }, kids.concat([
     x.group === 'chua' ? '' : el('label', { class: 'ack' }, [
       el('input', { type: 'checkbox', checked: !!ackMap[L.ackKey(x.tab, x.dot)], onchange: e => markClass(x.tab, x.dot, x.due, e.target.checked) }),
-      'Đã gửi tin thu đợt ' + x.dot + ' cho lớp']),
-    el('button', { class: 'quiet cal-book', textContent: x.book ? 'Đổi sách đợt ' + x.dot : 'Chọn sách đợt ' + x.dot, onclick: () => { tab = 'dot'; openClass(x.tab); loadBooks(); loadSchedule(); } })]);
+      'Đã gửi tin thu đợt ' + x.dot]),
+    el('div', { class: 'card-actions' }, [
+      el('button', { class: 'act', textContent: 'Thu tiền', onclick: go('thu') }),
+      el('button', { class: 'act', textContent: 'Gửi Zalo', onclick: go('zalo') }),
+      el('button', { class: 'act', textContent: x.book ? 'Đổi sách' : 'Chọn sách', onclick: go('dot') })])]));
 }
 function renderCal(box) {
   box.append(el('div', { class: 'page-title' }, [
@@ -553,15 +555,6 @@ function renderCal(box) {
     const list = cal.list.filter(x => x.group === id);
     if (list.length) box.append(el('h2', { class: 'section', textContent: title + ' (' + list.length + ')' }), el('div', { class: 'classes' }, list.map(calRow)));
   });
-}
-function dueBanner() {
-  if (!cal) return '';
-  const now = cal.list.filter(x => x.group === 'den' || x.group === 'qua'), soon = cal.list.filter(x => x.group === 'sap');
-  if (!now.length && !soon.length) return '';
-  const names = list => list.map(x => x.tab).join(', ');
-  return el('button', { class: 'due-banner card', onclick: openCal }, [
-    now.length ? el('div', {}, [el('strong', { textContent: 'Đến hạn thu: ' }), names(now)]) : '',
-    soon.length ? el('div', {}, [el('strong', { textContent: 'Sắp thu: ' }), names(soon)]) : '']);
 }
 
 /* ---------- Student movements: new, transfer, leaving ---------- */
@@ -737,37 +730,58 @@ async function boQuaMove(m) {
 }
 function stat(value, label, alert) { return el('div', { class: alert ? 'stat card alert' : 'stat card' }, [el('b', { textContent: value }), el('span', { textContent: label })]); }
 
+const classRows = () => classes.map(name => { const c = store.get('hp_cls_' + name); return { name, data: c && c.data }; });
+const updatedText = () => { const at = store.get('hp_all_at'); return loadingAll ? 'Đang cập nhật ' + loadedCount + ' / ' + loadTotal + ' lớp, vẫn bấm vào lớp được…' : at ? 'Cập nhật lúc ' + new Date(at).toLocaleString('vi-VN', { hour: '2-digit', minute: '2-digit', day: '2-digit', month: '2-digit' }) : 'Chưa đọc đủ các lớp'; };
+const updateButton = () => el('button', { class: 'act', textContent: loadingAll ? 'Đang cập nhật…' : 'Cập nhật tất cả', disabled: loadingAll, onclick: () => loadAll() });
+function tile(value, label, alert, onclick) {
+  return el('button', { class: alert && value ? 'tile alert' : 'tile', onclick }, [el('b', { textContent: String(value) }), el('span', { textContent: label })]);
+}
+function goTo(name) { view = name; $('lop').value = ''; notice(''); window.scrollTo(0, 0); render(); }
 function renderHome(box) {
-  const rows = classes.map(name => { const c = store.get('hp_cls_' + name); return { name, data: c && c.data }; });
-  const known = rows.filter(r => r.data).map(r => ({ name: r.name, data: r.data, s: summarize(r.data) }));
-  const owe = known.reduce((a, r) => a + r.s.owe, 0), left = known.reduce((a, r) => a + r.s.total - r.s.paid, 0), flagged = known.reduce((a, r) => a + r.s.warn, 0);
-  const at = store.get('hp_all_at'), blankAll = known.reduce((a, r) => a + r.s.blank, 0), blankOwe = known.reduce((a, r) => a + r.s.blankOwe, 0);
+  const known = classRows().filter(r => r.data).map(r => summarize(r.data)), add = f => known.reduce((n, s) => n + f(s), 0);
+  const blankAll = add(s => s.blank), blankOwe = add(s => s.blankOwe), owe = add(s => s.owe), flagged = add(s => s.warn);
+  const list = cal ? cal.list : [], now = list.filter(x => x.group === 'den' || x.group === 'qua'), soon = list.filter(x => x.group === 'sap');
+  const notSent = now.filter(x => !ackMap[L.ackKey(x.tab, x.dot)]), moveCount = moves ? moves.list.filter(m => !m.wait).length + moves.due.length : 0;
   box.append(
     el('div', { class: 'page-title' }, [
-      el('div', {}, [el('h1', { textContent: 'Tổng quan các lớp' }),
-        el('div', { class: 'sub', textContent: loadingAll ? 'Đang cập nhật ' + loadedCount + ' / ' + loadTotal + ' lớp, vẫn bấm vào lớp được…' : at ? 'Cập nhật lúc ' + new Date(at).toLocaleString('vi-VN', { hour: '2-digit', minute: '2-digit', day: '2-digit', month: '2-digit' }) : 'Chưa đọc đủ các lớp' })]),
-      el('button', { textContent: loadingAll ? 'Đang cập nhật…' : 'Cập nhật tất cả', disabled: loadingAll, onclick: () => loadAll() })]),
-    dueBanner(),
-    el('div', { class: 'stats' }, [stat(L.fmt(owe) + ' đ', 'Còn phải thu đợt này'), stat(String(left), 'Học sinh chưa nộp hoặc chưa ghi'), stat(String(flagged), 'Số tiền cần xem lại', flagged > 0)]),
-    blankAll ? el('div', { class: 'sub', style: 'margin:-8px 0 16px', textContent: 'Trong đó ' + blankAll + ' em (' + L.fmt(blankOwe) + ' đ) chưa ghi: có thể đã nộp mà chưa tick, nên số thực phải thu có thể thấp hơn.' }) : '');
+      el('div', {}, [el('h1', { textContent: 'Việc cần làm' }), el('div', { class: 'sub', textContent: updatedText() })]), updateButton()]),
+    el('div', { class: 'tiles' }, [
+      tile(now.length, 'Lớp đến hạn thu', true, openCal),
+      tile(notSent.length, 'Lớp chưa gửi tin', true, () => { const s = $('canLam'); if (s) s.scrollIntoView({ behavior: 'smooth' }); }),
+      tile(soon.length, 'Lớp sắp thu', false, openCal),
+      tile(blankAll, 'Em chưa ghi nộp', false, () => { lopFilter = 'ghi'; goTo('lop'); }),
+      tile(moveCount, 'Biến động cần xử lý', true, () => { goTo('moves'); if (!moves || Date.now() - moves.at > FRESH_MS) loadMoves(); })]),
+    el('div', { class: 'stats' }, [stat(L.fmt(owe - blankOwe) + ' đ', 'Đã rõ chưa nộp'), stat(L.fmt(blankOwe) + ' đ', 'Chưa ghi, có thể đã nộp'), stat(String(flagged), 'Số tiền cần xem lại', flagged > 0)]));
+  if (now.length) box.append(el('h2', { class: 'section', id: 'canLam', textContent: 'Đến hạn thu (' + now.length + ')' }), el('div', { class: 'classes' }, now.map(calRow)));
+  if (soon.length) box.append(el('h2', { class: 'section', textContent: 'Sắp thu (' + soon.length + ')' }), el('div', { class: 'classes' }, soon.map(calRow)));
+  if (!now.length && !soon.length) box.append(el('div', { class: 'empty', textContent: cal ? 'Chưa có lớp nào đến hạn hoặc sắp thu.' : 'Đang đọc lịch thu…' }));
+}
+let lopFilter = 'all';
+function renderLop(box) {
+  const rows = classRows();
+  box.append(el('div', { class: 'page-title' }, [
+    el('div', {}, [el('h1', { textContent: 'Các lớp' }), el('div', { class: 'sub', textContent: updatedText() })]), updateButton()]));
+  const pick = (id, label) => el('button', { textContent: label, 'aria-pressed': String(lopFilter === id), onclick: () => { lopFilter = id; render(); } });
   const q = el('input', { class: 'search', type: 'search', value: query, placeholder: 'Tìm lớp, ví dụ KIDS 31', 'aria-label': 'Tìm lớp',
     oninput: e => { query = e.target.value; const g = $('grid'); if (g) fillGrid(g, rows); } });
   const grid = el('div', { class: 'classes', id: 'grid' });
-  box.append(q, grid);
+  box.append(q, el('div', { class: 'filters' }, [pick('all', 'Tất cả'), pick('owe', 'Còn phải thu'), pick('ghi', 'Có em chưa ghi')]), grid);
   fillGrid(grid, rows);
 }
 function fillGrid(grid, rows) {
   const t = query.trim().toLowerCase();
-  grid.replaceChildren(...rows.filter(r => !t || r.name.toLowerCase().includes(t)).map(r => {
+  const keep = r => { if (t && !r.name.toLowerCase().includes(t)) return false; if (lopFilter === 'all') return true; if (!r.data) return false; const s = summarize(r.data); return lopFilter === 'ghi' ? s.blank > 0 : s.owe > 0; };
+  grid.replaceChildren(...rows.filter(keep).map(r => {
     const s = r.data ? summarize(r.data) : null;
-    const kids = [el('div', { class: 'top' }, [el('b', { textContent: r.name }), el('small', { textContent: r.data ? 'Đợt ' + r.data.dot : 'Chưa đọc' })])];
+    const kids = [el('div', { class: 'top' }, [el('b', { textContent: r.name }), el('small', { textContent: r.data ? 'Đang thu đợt ' + r.data.dot : 'Chưa đọc' })])];
     if (s) {
       kids.push(el('div', { class: 'track', role: 'img', 'aria-label': 'Đã nộp ' + s.paid + ' trên ' + s.total }, [el('i', { style: 'width:' + (s.total ? Math.round(s.paid / s.total * 100) : 0) + '%' })]));
       const low = [el('span', {}, ['Đã nộp ', el('strong', { textContent: s.paid + '/' + s.total })]), el('span', {}, ['Còn ', el('strong', { textContent: money(s.owe) || '0 đ' })])];
+      if (s.blank) low.push(el('span', { class: 'note', textContent: s.blank + ' em chưa ghi' }));
       if (s.warn) low.push(el('span', { class: 'flag', textContent: s.warn + ' em cần xem lại số tiền' }));
       kids.push(el('div', { class: 'low' }, low));
     }
-    return el('button', { class: 'class', onclick: () => openClass(r.name) }, kids);
+    return el('button', { class: 'class', onclick: () => { tab = 'thu'; filter = 'can'; openClass(r.name); } }, kids);
   }));
 }
 function renderClass(box) {
@@ -843,7 +857,7 @@ function bookPanel() {
   return el('div', { class: 'card panel' }, [
     el('h2', { class: 'panel-title', textContent: 'Sách thu cùng đợt ' + cur.nextDot }),
     bookList ? el('div', { class: 'books' }, pickers) : el('div', { class: 'sub', textContent: 'Đang đọc danh mục sách…' }),
-    bookList && shown < draft.length ? el('button', { class: 'quiet', textContent: '+ Thêm sách', onclick: () => { bookExtra[cur.tab] = shown + 1; render(); } }) : '',
+    bookList && shown < draft.length ? el('button', { class: 'act', style: 'margin-top:8px', textContent: '+ Thêm sách', onclick: () => { bookExtra[cur.tab] = shown + 1; render(); } }) : '',
     el('div', { class: 'sub', style: 'margin-top:8px', textContent: 'Học phí ' + L.fmt(fee) + ' đ + sách ' + L.fmt(sum) + ' đ = ' + L.fmt(fee + sum) + ' đ' }),
     changed ? el('div', { class: 'acts' }, [
       el('button', { class: 'primary', id: 'bookSave', textContent: 'Lưu sách', onclick: () => luuSach(draft) }),
@@ -894,7 +908,7 @@ function feeRow(it) {
     el('div', { class: 'r2' }, r2),
     it.paid ? '' : el('div', { class: 'r3' }, sent
       ? [el('span', { class: 'sent', textContent: sentText(sent) }), (sentIdx[cur.tab + '|' + cur.dot] || {})[it.key] ? el('button', { class: 'quiet', textContent: 'Bỏ đánh dấu', onclick: () => markStudent(it, false) }) : '']
-      : [el('button', { class: 'quiet', textContent: 'Đánh dấu đã gửi Zalo', onclick: () => markStudent(it, true) })]),
+      : [el('button', { class: 'act', textContent: 'Đánh dấu đã gửi Zalo', onclick: () => markStudent(it, true) })]),
     it.warn ? el('div', { class: 'warn-line' }, [it.warn, el('button', { class: 'quiet', textContent: 'Xem và sửa', onclick: () => moSua(it) })]) : '',
     !it.warn && it.trong ? el('div', { class: 'warn-line' }, ['Chưa có tin hoặc số tiền đợt này.', el('button', { class: 'quiet', textContent: 'Nhập', onclick: () => moSua(it) })]) : '']);
 }
@@ -932,7 +946,7 @@ function renderZalo(box) {
     chuaGhi(it) ? el('div', { class: 'warn-line', style: 'margin:0 0 8px' }, ['Em này chưa ghi nộp hay chưa. Xem sao kê trước khi gửi, đã nộp thì tick ở tab Thu tiền.']) : '',
     el('div', { class: 'r3' }, mine
       ? [el('span', { class: 'sent', textContent: sentText(mine) }), own ? el('button', { class: 'quiet', textContent: 'Bỏ đánh dấu', onclick: () => markStudent(it, false) }) : '']
-      : [el('button', { class: 'quiet', textContent: 'Đánh dấu đã gửi', onclick: () => markStudent(it, true) })]),
+      : [el('button', { class: 'act', textContent: 'Đánh dấu đã gửi', onclick: () => markStudent(it, true) })]),
     el('button', { class: 'one primary', id: 'one', textContent: oneLabel(it), onclick: oneClick }),
     it.qr ? el('div', { class: 'pv' }, [img]) : '',
     el('div', { class: 'nav', style: 'margin-top:8px' }, [
@@ -1026,20 +1040,22 @@ async function afterLogin() {
 }
 function fillClasses(list) {
   classes = list; const s = $('lop'), v = s.value;
-  s.replaceChildren(el('option', { value: '', textContent: 'Chọn lớp…' }), ...list.map(n => el('option', { value: n, textContent: n })));
+  s.replaceChildren(el('option', { value: '', textContent: 'Mở nhanh một lớp…' }), ...list.map(n => el('option', { value: n, textContent: n })));
   s.value = v;
 }
 window.addEventListener('load', () => {
   $('btnLogin').addEventListener('click', () => getToken(true).then(afterLogin).catch(e => { $('loginMsg').textContent = e.message; }));
-  $('home').addEventListener('click', () => { view = 'home'; $('lop').value = ''; notice(''); render(); });
+  $('home').addEventListener('click', () => goTo('home'));
+  $('navHome').addEventListener('click', () => goTo('home'));
+  $('navLop').addEventListener('click', () => { lopFilter = 'all'; goTo('lop'); });
   $('lop').addEventListener('change', e => { if (e.target.value) { filter = 'can'; openClass(e.target.value); } });
   $('reload').addEventListener('click', () => {
-    if (view === 'home') loadAll(); else if (view === 'moves') loadMoves();
+    if (view === 'home' || view === 'lop') loadAll(); else if (view === 'moves') loadMoves();
     else if (view === 'cal') loadCal(true).then(() => loadSchedule(true));
     else if (cur) openClass(cur.tab, true);
   });
   $('btnCal').addEventListener('click', openCal);
-  $('btnMoves').addEventListener('click', () => { view = 'moves'; $('lop').value = ''; notice(''); render(); if (!moves || Date.now() - moves.at > FRESH_MS) loadMoves(); });
+  $('btnMoves').addEventListener('click', () => { goTo('moves'); if (!moves || Date.now() - moves.at > FRESH_MS) loadMoves(); });
   $('dvLuu').addEventListener('click', luuDuyet);
   $('dvKhongThu').addEventListener('click', khongThuMove);
   $('dvHuy').addEventListener('click', () => $('duyet').close());

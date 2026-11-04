@@ -56,7 +56,7 @@
   .brand { border: 0; background: none; padding: 4px 8px 4px 0; display: flex; align-items: center; gap: 8px; font-weight: 700; font-size: 16px; color: var(--brand); }
   .brand:hover { border: 0; }
   .brand i { width: 30px; height: 30px; border-radius: 9px; background: var(--brand); color: var(--on-brand); display: grid; place-items: center; font-style: normal; font-size: 15px; }
-  #lop { flex: 1; min-width: 0; max-width: 240px; min-height: 44px; padding: 6px 10px; border: 1px solid var(--line); border-radius: 10px; background: var(--card); font-weight: 600; }
+  #lop { flex: 0 1 190px; min-width: 0; min-height: 44px; padding: 6px 10px; border: 1px solid var(--line); border-radius: 10px; background: var(--card); font-weight: 600; }
   .spacer { flex: 1; }
   main { max-width: 1120px; margin: 0 auto; padding: 16px 16px 48px; }
   .notices { display: grid; gap: 8px; margin-bottom: 12px; }
@@ -93,7 +93,7 @@
   .class-head .nums strong { color: var(--ink); font-weight: 600; }
   .seg { display: grid; grid-template-columns: repeat(3, 1fr); gap: 4px; padding: 4px; margin-bottom: 12px; border-radius: 12px; background: var(--soft); }
   .seg button { border: 0; background: none; color: var(--muted); }
-  .seg button[aria-pressed="true"] { background: var(--card); color: var(--ink); font-weight: 600; box-shadow: var(--shadow); }
+  .seg button[aria-pressed="true"] { background: var(--brand); color: var(--on-brand); font-weight: 600; }
   .filters { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; }
   .filters button { min-height: 36px; padding: 4px 12px; border-radius: 18px; font-size: 14px; }
   .filters button[aria-pressed="true"] { background: var(--brand-soft); border-color: var(--brand); color: var(--brand); font-weight: 600; }
@@ -159,9 +159,22 @@
   .due-banner { display: block; width: 100%; margin-bottom: 12px; padding: 12px 14px; text-align: left; font-weight: 400; background: var(--warn-soft); color: var(--warn); border-color: var(--warn-soft); }
   .due-banner strong { font-weight: 700; }
   .cal-row { border: 1px solid var(--line); background: var(--card); }
-  .cal-open { display: block; width: 100%; min-height: 0; padding: 0; border: 0; background: none; text-align: left; font-weight: 400; }
+  .tabs { display: flex; gap: 4px; padding: 4px; border-radius: 12px; background: var(--soft); }
+  .tabs button { min-height: 40px; padding: 6px 12px; border: 0; background: none; color: var(--muted); white-space: nowrap; }
+  .tabs button:hover { color: var(--ink); }
+  .tabs button[aria-current="true"] { background: var(--brand); color: var(--on-brand); font-weight: 600; }
+  .tiles { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 8px; margin-bottom: 12px; }
+  .tile { display: block; min-height: 88px; padding: 12px 14px; text-align: left; font-weight: 400; border-radius: 14px; box-shadow: var(--shadow); }
+  .tile b { display: block; font-size: 28px; font-weight: 700; line-height: 1.2; }
+  .tile span { color: var(--muted); font-size: 13px; }
+  .tile.alert { background: var(--warn-soft); border-color: var(--warn-soft); }
+  .tile.alert b { color: var(--warn); }
+  .act { min-height: 38px; padding: 4px 12px; border-color: var(--brand-soft); background: var(--brand-soft); color: var(--brand); font-size: 14px; font-weight: 600; }
+  .act:hover { border-color: var(--brand); }
+  .card-actions { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; margin-top: 10px; }
+  .card-actions .act { padding: 4px 2px; }
+  .class .note { width: 100%; color: var(--muted); }
   .cal-row .ack { padding-top: 8px; border-top: 1px solid var(--line); }
-  .cal-book { display: block; margin-top: 4px; padding-left: 0; font-size: 13px; }
   .cal-row .top { margin-bottom: 6px; align-items: center; }
   .cal-line { font-size: 14px; }
   .cal-line.sub { font-size: 13px; }
@@ -171,7 +184,7 @@
   .sent { color: var(--ok); font-size: 13px; font-weight: 500; }
   .cal-line.sent { margin-top: 2px; }
   .row .r3, .stage .r3 { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; margin-top: 4px; min-height: 28px; font-size: 13px; }
-  .r3 .quiet { min-height: 32px; padding: 2px 6px; font-size: 13px; }
+  .r3 .quiet, .r3 .act { min-height: 32px; padding: 2px 8px; font-size: 13px; }
   .ack { display: flex; align-items: center; gap: 8px; margin-top: 10px; font-size: 14px; font-weight: 500; cursor: pointer; }
   .ack input { width: 20px; height: 20px; flex: none; accent-color: var(--ok); }
   .panel { padding: 14px 16px; margin-bottom: 12px; }
@@ -186,8 +199,12 @@
   .log { margin: 6px 0 0; padding-left: 18px; font-size: 13px; color: var(--muted); max-height: 240px; overflow-y: auto; }
   @media (max-width: 640px) {
     .bar { flex-wrap: wrap; }
-    #btnCal, #btnMoves { flex: 1; }
+    .tabs { order: 5; flex: 1 1 100%; }
+    .tabs button { flex: 1; padding: 6px 2px; font-size: 13px; }
+    #lop { flex: 1 1 120px; }
     .spacer { display: none; }
+    .tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .stats { grid-template-columns: 1fr; }
   }
 
   @media (min-width: 860px) {
@@ -219,11 +236,15 @@
   <header>
     <div class="bar">
       <button id="home" class="brand" aria-label="Về trang tổng quan"><i aria-hidden="true">₫</i><span>Học phí</span></button>
-      <select id="lop" aria-label="Chọn lớp"></select>
-      <button id="reload" aria-label="Tải lại số mới" title="Tải lại số mới">↻</button>
-      <button id="btnCal">Lịch thu</button>
-      <button id="btnMoves">Biến động</button>
+      <nav class="tabs" aria-label="Các trang">
+        <button id="navHome">Tổng quan</button>
+        <button id="btnCal">Lịch thu</button>
+        <button id="navLop">Các lớp</button>
+        <button id="btnMoves">Biến động</button>
+      </nav>
       <div class="spacer"></div>
+      <select id="lop" aria-label="Mở nhanh một lớp"></select>
+      <button id="reload" aria-label="Tải lại số mới" title="Tải lại số mới">↻ Tải lại</button>
       <button id="btnOut" class="quiet">Đăng xuất</button>
     </div>
   </header>
