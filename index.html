@@ -197,12 +197,17 @@
   .hist summary { cursor: pointer; font-weight: 500; }
   .detail { margin: 6px 0 0; font: inherit; font-size: 13px; color: var(--muted); white-space: pre-wrap; }
   .log { margin: 6px 0 0; padding-left: 18px; font-size: 13px; color: var(--muted); max-height: 240px; overflow-y: auto; }
-  @media (max-width: 640px) {
+  #reload, #btnOut { white-space: nowrap; flex: none; }
+  .brand { flex: none; white-space: nowrap; }
+  @media (max-width: 960px) {
     .bar { flex-wrap: wrap; }
     .tabs { order: 5; flex: 1 1 100%; }
-    .tabs button { flex: 1; padding: 6px 2px; font-size: 13px; }
+    .tabs button { flex: 1; padding: 6px 2px; font-size: 14px; }
     #lop { flex: 1 1 120px; }
     .spacer { display: none; }
+  }
+  @media (max-width: 640px) {
+    .tabs button { font-size: 13px; }
     .tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); }
     .stats { grid-template-columns: 1fr; }
   }
