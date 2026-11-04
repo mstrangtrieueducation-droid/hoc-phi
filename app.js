@@ -4,11 +4,40 @@ const SHEET_API = 'https://sheets.googleapis.com/v4/spreadsheets/' + CONFIG.shee
 const SCHEDULE_API = 'https://sheets.googleapis.com/v4/spreadsheets/' + CONFIG.scheduleId;
 const L = window.HpLogic;
 const $ = id => document.getElementById(id);
+// Saved data lives in IndexedDB: localStorage is shared with every other page on this github.io address, and those pages fill its 5 MB.
+// Reads come from a copy in memory, loaded once by openStore, so the rest of the app can stay synchronous.
+const saved = new Map();
+let db = null;
+const dbWrite = fn => { if (!db) return; try { fn(db.transaction('kv', 'readwrite').objectStore('kv')); } catch (e) { /* the app works without the cache */ } };
 const store = {
-  get(k) { try { return JSON.parse(localStorage.getItem(k)); } catch (e) { return null; } },
-  set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) { /* the app works without the cache */ } },
-  del(k) { try { localStorage.removeItem(k); } catch (e) { /* nothing to clear */ } }
+  get(k) { try { return saved.has(k) ? JSON.parse(saved.get(k)) : null; } catch (e) { return null; } },
+  set(k, v) { const s = JSON.stringify(v); saved.set(k, s); dbWrite(os => os.put(s, k)); },
+  del(k) { saved.delete(k); dbWrite(os => os.delete(k)); },
+  clear() { [...saved.keys()].forEach(k => store.del(k)); }
 };
+function openStore() {
+  return new Promise(done => {
+    try {
+      const req = indexedDB.open('hocphi', 1);
+      req.onupgradeneeded = () => req.result.createObjectStore('kv');
+      req.onerror = () => done();
+      req.onsuccess = () => {
+        db = req.result;
+        const os = db.transaction('kv').objectStore('kv'), all = os.getAll(), keys = os.getAllKeys();
+        keys.onsuccess = () => { keys.result.forEach((k, n) => saved.set(k, all.result[n])); done(); };
+        keys.onerror = () => done();
+      };
+    } catch (e) { done(); }
+  }).then(() => {
+    // Move what older versions left in localStorage, including ticks not yet sent.
+    try {
+      Object.keys(localStorage).filter(k => k.startsWith('hp_')).forEach(k => {
+        if (!saved.has(k)) { saved.set(k, localStorage.getItem(k)); dbWrite(os => os.put(localStorage.getItem(k), k)); }
+        if (db) localStorage.removeItem(k);
+      });
+    } catch (e) { /* nothing to move */ }
+  });
+}
 
 /* ---------- Sign-in ---------- */
 let token = null, tokenUntil = 0, tokenClient = null, tokenWaiters = [];
@@ -833,18 +862,21 @@ window.addEventListener('load', () => {
     if (token) google.accounts.oauth2.revoke(token, () => {});
     token = null; pending = []; cal = null; sched = null; khoMemo = null;
     try { sessionStorage.removeItem('hp_token'); } catch (e) { /* nothing to clear */ }
-    Object.keys(localStorage).filter(k => k.startsWith('hp_')).forEach(k => store.del(k));
+    store.clear();
     showLogin(false);
   });
   $('edLuu').addEventListener('click', () => ghiRieng($('edMsg').value, $('edAmt').value));
   $('edBo').addEventListener('click', () => ghiRieng('', ''));
   $('edHuy').addEventListener('click', () => $('sua').close());
-  const wait = setInterval(() => { if (window.google && google.accounts) {
-    clearInterval(wait); initAuth(); $('btnLogin').disabled = false;
-    try {
-      const saved = JSON.parse(sessionStorage.getItem('hp_token'));
-      if (saved && Date.now() < saved.tokenUntil) { token = saved.token; tokenUntil = saved.tokenUntil; afterLogin(); }
-    } catch (e) { /* the sign-in button is still there */ }
-  } }, 100);
+  openStore().then(() => {
+    pending = store.get(QKEY) || []; cal = store.get('hp_cal'); sched = store.get('hp_sched');
+    const wait = setInterval(() => { if (window.google && google.accounts) {
+      clearInterval(wait); initAuth(); $('btnLogin').disabled = false;
+      try {
+        const kept = JSON.parse(sessionStorage.getItem('hp_token'));
+        if (kept && Date.now() < kept.tokenUntil) { token = kept.token; tokenUntil = kept.tokenUntil; afterLogin(); }
+      } catch (e) { /* the sign-in button is still there */ }
+    } }, 100);
+  });
   window.addEventListener('beforeunload', e => { if (pending.length) e.preventDefault(); });
 });
