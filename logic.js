@@ -454,15 +454,41 @@
     (rows || []).forEach(r => {
       if (!r || !r[1] || !r[5]) return;
       const c = idx[r[1] + '|' + r[2]] = idx[r[1] + '|' + r[2]] || {};
-      if (r[6] === 'bo') delete c[r[5]]; else c[r[5]] = { at: String(r[0] || ''), by: String(r[7] || '') };
+      const was = c[r[5]], mark = { at: String(r[0] || ''), by: String(r[7] || '') };
+      // Taking back a repeat reminder returns to the send before it, so the seven days count from that again.
+      if (r[6] === 'bo') { if (was && was.before) c[r[5]] = was.before; else delete c[r[5]]; }
+      else if (r[6] === 'nhac-lai') c[r[5]] = Object.assign(mark, { lan: ((was && was.lan) || 0) + 1, before: was });
+      else c[r[5]] = mark;
     });
     return idx;
   }
+  const REMIND_AFTER = 7;
+  /** The log writes "dd/mm hh:mm" with no year: it is the latest such date not after today. */
+  function sentDay(at, today) {
+    const m = String(at).match(/^(\d{1,2})\/(\d{1,2})/);
+    if (!m) return NaN;
+    const y = new Date(today * 86400000).getUTCFullYear(), day = year => Date.UTC(year, +m[2] - 1, +m[1]) / 86400000;
+    return day(y) > today + 1 ? day(y - 1) : day(y);
+  }
+  /**
+   * Students still owing REMIND_AFTER days after their message went out, or after their last reminder. Classes ticked before
+   * the log existed have no send date, so ackDue (the due date of a ticked class) stands in and the row says so.
+   */
+  function remindDue(items, marks, today, ackDue) {
+    return (items || []).filter(x => !x.paid && !x.trong && x.amount > 0 && !/chưa thu ngay|chua thu ngay/i.test(x.status)).map(x => {
+      const own = marks && marks[x.key], whole = marks && marks['*'];
+      const known = [own, whole].filter(Boolean).map(m => sentDay(m.at, today)).filter(n => !isNaN(n));
+      const from = known.length ? Math.max.apply(null, known) : Number(ackDue);
+      if (!from || isNaN(from) || today - from < REMIND_AFTER) return null;
+      return { item: x, from, days: today - from, guess: !known.length, lan: (own && own.lan) || 0, blank: !x.date && !String(x.status || '').trim() };
+    }).filter(Boolean);
+  }
+
   /** Students with no "đã gửi" mark for a đợt. marks: one class|đợt entry of sentIndex; '*' is the whole-class tick. */
   function notMarked(students, marks) {
     if (marks && marks['*']) return [];
     return (students || []).filter(x => !(marks && marks[x.key]));
   }
 
-  return { notMarked, dayOf, dayText, dayNow, calendar, classKey, weekSessions, scheduleGaps, scheduleLessons, weekdays, ackKey, sentIndex, leaveStatus, classifyMoves, moveInputs, qrFromMessage, intakeDue, EXIT_ACCOUNT, NEW_TAB, EXIT_TAB, buildClass, dropGop, addGop, classRanges, freshRanges, freshAt, planPaid, planUnpaid, planOverride, findPeriodCol, colA1, quote, fmt, digits, clean, isPaid, todayText, ACTIVE };
+  return { remindDue, REMIND_AFTER, sentDay, notMarked, dayOf, dayText, dayNow, calendar, classKey, weekSessions, scheduleGaps, scheduleLessons, weekdays, ackKey, sentIndex, leaveStatus, classifyMoves, moveInputs, qrFromMessage, intakeDue, EXIT_ACCOUNT, NEW_TAB, EXIT_TAB, buildClass, dropGop, addGop, classRanges, freshRanges, freshAt, planPaid, planUnpaid, planOverride, findPeriodCol, colA1, quote, fmt, digits, clean, isPaid, todayText, ACTIVE };
 });
