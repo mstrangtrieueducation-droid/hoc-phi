@@ -81,7 +81,7 @@
       if (!soTien && tienSheet > 0 && tienSheet !== tienAuto && !stale) soTien = String(tienSheet);
       const prevStatus = prevCol > 0 ? String(cell([r], 0, prevCol - 1)).trim() : '';
       const prev = prevCol > 0 ? { dot: String(Number(dot) - 1), status: prevStatus, amount: digits(cell([r], 0, prevCol)), date: String(cell([r], 0, prevCol + 1)), paid: isPaid(prevStatus) } : null;
-      rows.push({ stale, prevStatus, prev, row, name, eng, key, auto, manual: String(sua.msg || '').trim(), soTien, tienSheet, tienAuto, status, date,
+      rows.push({ disc: String(cell([r], 0, nameCol + 3)).trim(), stale, prevStatus, prev, row, name, eng, key, auto, manual: String(sua.msg || '').trim(), soTien, tienSheet, tienAuto, status, date,
         paid: isPaid(status), tuSheet: !!soTien && soTien !== String(sua.amt || ''), hadOverride: !!(sua.msg || sua.amt),
         link: (auto.match(/https:\/\/img\.vietqr\.io\/\S+/) || [''])[0], goc: sua.goc });
     }
@@ -92,7 +92,7 @@
       const nhap = tinChung ? tinChung.replace(/^(LỚP [^\n]*)/m, '$1\nHọc viên: ' + nm) : '';
       let msgOut = x.manual || x.auto;
       if (!msgOut && x.soTien) msgOut = nhap;
-      const base = { prev: x.prev, row: x.row, name: x.name, eng: x.eng, key: x.key, paid: x.paid, status: x.status, date: x.date,
+      const base = { disc: x.disc, prev: x.prev, row: x.row, name: x.name, eng: x.eng, key: x.key, paid: x.paid, status: x.status, date: x.date,
         tienSheet: x.tienSheet, tienAuto: x.tienAuto, goc: x.goc, hadOverride: x.hadOverride };
       if (!msgOut) return Object.assign(base, { trong: true, msg: '', qr: '', rieng: false, manual: '', soTien: '', auto: '', nhap: boQr(nhap), amount: x.tienSheet, warn: '' });
       // A typed amount wins over the merged one, so the message must not still claim the merge.
@@ -205,6 +205,42 @@
     if (!isLet(p.vis(0))) up.push({ range: p.vA1(0), values: [[liveFormula(it.row, '"Đã nộp"')]] });
     if (!isLet(p.vis(1)) && (p.vis(1) === '' || fix) && amt > 0) up.push({ range: p.vA1(1), values: [[liveFormula(it.row, amt)]] });
     if (!isLet(p.vis(2))) up.push({ range: p.vA1(2), values: [[dateText]] });
+    return up;
+  }
+
+  /**
+   * A discount as the class formulas read it: '' none, a whole number of đồng per đợt, 'n%', or the free-tuition text.
+   * Throws on anything else, because a bare 20 would read as 20 đồng.
+   */
+  function discInput(raw) {
+    const s = String(raw === undefined || raw === null ? '' : raw).trim().toLowerCase();
+    if (!s) return '';
+    if (/miễn|mien/.test(s)) return 'miễn học phí';
+    const pct = s.match(/^(\d+(?:[.,]\d+)?)\s*%$/);
+    if (pct) { const n = Number(pct[1].replace(',', '.')); if (n > 0 && n < 100) return n + '%'; throw new Error('Phần trăm giảm phải từ trên 0 đến dưới 100.'); }
+    const n = digits(s);
+    if (/^[\d.,\s]+(đ|đồng|d)?$/.test(s) && n >= 1000) return n;
+    throw new Error('Nhập số tiền giảm mỗi đợt, ví dụ 600000, hoặc phần trăm, ví dụ 20%.');
+  }
+  /** The value a class row or a sheet shows, in words for the app: 600000, 0,2 and 20% all come through here. */
+  function discText(v) {
+    const s = String(v === undefined || v === null ? '' : v).trim();
+    if (!s) return '';
+    if (/miễn|mien/i.test(s)) return 'Miễn học phí';
+    if (/%$/.test(s)) return s;
+    const n = Number(s.replace(',', '.'));
+    if (n > 0 && n < 1) return Math.round(n * 1000) / 10 + '%';
+    return digits(s) ? fmt(digits(s)) + ' đ' : s;
+  }
+  /** The same value in the form discInput takes, to preselect it. */
+  function discValue(v) { const t = discText(v); return /^Miễn/.test(t) ? 'miễn học phí' : /%$/.test(t) ? t : String(digits(t) || ''); }
+  /** Writes for a student's discount: the row's E cell and its ledger copy, which is what keeps it through a roster sync. curE is the cell's formula. */
+  function planDiscount(tab, it, fresh, disc, curE) {
+    const li = locate(tab, it, fresh), up = [], ledger = a1(tab, 72, LEDGER_FIRST + li);
+    const pct = String(disc).match(/^(.+)%$/);
+    const expr = pct ? 'TO_PERCENT(' + String(Number(pct[1]) / 100).replace('.', ',') + ')' : typeof disc === 'number' ? disc : '"' + disc + '"';
+    up.push({ range: ledger, values: [[pct ? String(disc) : disc]] });
+    if (!isLet(curE)) up.push({ range: a1(tab, 5, it.row), values: [[disc === '' ? '' : liveFormula(it.row, expr)]] });
     return up;
   }
 
@@ -322,11 +358,22 @@
   const NEW_TAB = 'HS MỚI', EXIT_TAB = 'HS NGHI_CHUYEN LOP';
 
   /** Input cells for an approved move, as {tab, firstDataRow, nameCol, cells: {column: value}}. Formula columns are filled separately. */
+  /**
+   * This tab takes its discount off the bill as one amount, but a discount lowers the price of each session, and these rows bill
+   * only part of a đợt. So the cell holds the tuition's share of it, worked out from the row's own tuition (O) and {r} is its row.
+   */
+  function exitDiscount(disc) {
+    const pct = String(disc).match(/^(.+)%$/);
+    if (pct) return '=ROUND($O{r}*' + pct[1].replace('.', ',') + '%;0)';
+    if (typeof disc !== 'number') return disc;
+    return '=ROUND($O{r}*' + disc + `/INDIRECT("'"&$X{r}&"'!$B$6");0)`;
+  }
   function moveInputs(move, form) {
     const books = form.books || [], date = form.date || '';
     const cells = {};
     if (move.kind === 'moi') {
       Object.assign(cells, { B: move.to, C: move.name, D: move.eng, E: date });
+      if (form.disc) cells.F = form.disc;
       ['I', 'J', 'K', 'L', 'M'].forEach((c, i) => { if (books[i]) cells[c] = books[i]; });
       return { tab: NEW_TAB, firstDataRow: 3, nameCol: 'C', cells };
     }
@@ -335,8 +382,9 @@
     if (move.kind === 'chuyen') cells.G = move.to; else cells.W = EXIT_ACCOUNT;
     // A leaver who already paid can still owe for books: tuition is set to 0 on this row, so the total is the books alone.
     if (form.onlyBooks) cells.O = 0;
+    if (form.disc) cells.E = exitDiscount(form.disc);
     ['P', 'Q', 'R', 'S', 'T'].forEach((c, i) => { if (books[i]) cells[c] = books[i]; });
-    return { tab: EXIT_TAB, firstDataRow: 4, nameCol: 'B', cells };
+    return { tab: EXIT_TAB, firstDataRow: 4, nameCol: 'B', cells, noCopy: ['E'] };
   }
 
   const BANK_CODE = { 'MB Bank': 'MB', 'VietinBank': 'ICB' };
@@ -493,5 +541,5 @@
     return (students || []).filter(x => !(marks && marks[x.key]));
   }
 
-  return { remindDue, REMIND_AFTER, REMIND_EVERY, sentDay, notMarked, dayOf, dayText, dayNow, calendar, classKey, weekSessions, scheduleGaps, scheduleLessons, weekdays, ackKey, sentIndex, leaveStatus, classifyMoves, moveInputs, qrFromMessage, intakeDue, EXIT_ACCOUNT, NEW_TAB, EXIT_TAB, buildClass, dropGop, addGop, classRanges, freshRanges, freshAt, planPaid, planUnpaid, planOverride, findPeriodCol, colA1, quote, fmt, digits, clean, isPaid, todayText, ACTIVE };
+  return { remindDue, REMIND_AFTER, REMIND_EVERY, sentDay, notMarked, dayOf, dayText, dayNow, calendar, classKey, weekSessions, scheduleGaps, scheduleLessons, weekdays, ackKey, sentIndex, leaveStatus, classifyMoves, moveInputs, qrFromMessage, intakeDue, EXIT_ACCOUNT, NEW_TAB, EXIT_TAB, buildClass, dropGop, addGop, discInput, discText, discValue, planDiscount, locate, classRanges, freshRanges, freshAt, planPaid, planUnpaid, planOverride, findPeriodCol, colA1, quote, fmt, digits, clean, isPaid, todayText, ACTIVE };
 });

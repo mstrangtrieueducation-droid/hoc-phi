@@ -130,6 +130,7 @@ async function readClass(name) {
   const [parts, rows] = await Promise.all([batchGet(L.classRanges(name)), readKho()]);
   return buildFrom(name, parts, rows);
 }
+function warmCurrent() { if (cur && cur.items.length && token) warmUp(cur.tab, cur.items.map(x => x.row)); }
 function setCurrent(data, at, fresh) {
   const keepKey = cur && cur.tab === data.tab ? (zaloItems()[i] || {}).key : null;
   cur = data; curAt = at; curFresh = fresh; cards = {};
@@ -146,7 +147,8 @@ async function openClass(name, force) {
   const cached = store.get('hp_cls_' + name), fresh = !!cached && !cached.dirty && !!cached.data.history && Date.now() - cached.at < FRESH_MS;
   if (cached) { i = 0; setCurrent(cached.data, cached.at, fresh); }
   else { cur = null; render(); notice('Đang đọc ' + name + ' lần đầu…'); }
-  if (!fresh || force) await refreshClass(name, seq);
+  if (cached) warmCurrent();
+  if (!fresh || force) { await refreshClass(name, seq); warmCurrent(); }
 }
 async function refreshClass(name, seq) {
   try {
@@ -199,6 +201,52 @@ async function loadAll(auto) {
 }
 
 /* ---------- Paid ticks: saved in the browser first, then one batch per class ---------- */
+/**
+ * Every write makes the whole file recalculate, and a read then waits about a minute while a write takes a second or two.
+ * So the checks a tick needs are read ahead, when the class opens and again after each save, and a tick only writes.
+ */
+const WARM_MS = 5 * 60000;
+const warm = {};
+function warmUp(name, rows) {
+  const w = warm[name] = warm[name] || { written: {} };
+  if (w.busy) { w.again = rows; return w.busy; }
+  const at = Date.now(), want = L.freshRanges(name, rows);
+  w.busy = Promise.all([batchGet(want.values), batchGet(want.cells, 'FORMULA')]).then(([values, cells]) => {
+    w.at = at; w.rows = rows; w.values = values; w.cells = cells;
+    // What this read started after is in it; only later writes still count as unseen.
+    Object.keys(w.written).forEach(k => { if (w.written[k] <= at) delete w.written[k]; });
+    checkWritten(name);
+  }).catch(e => { console.error(e.message); }).then(() => {
+    w.busy = null;
+    if (w.again) { const r = w.again; w.again = null; warmUp(name, r); }
+  });
+  return w.busy;
+}
+/** Answers for one save: the read-ahead when it is recent and covers these rows, otherwise a fresh read as before. */
+async function freshFor(name, group) {
+  const w = warm[name], usable = w && w.values && Date.now() - w.at < WARM_MS
+    && group.every(p => w.rows.includes(p.item.row) && !w.written[p.item.row + '|' + p.dot]);
+  if (usable) return p => L.freshAt(w.values, w.cells, w.rows.indexOf(p.item.row));
+  const rows = group.map(p => p.item.row), want = L.freshRanges(name, rows), [values, cells] = await Promise.all([batchGet(want.values), batchGet(want.cells, 'FORMULA')]);
+  return (p, k) => L.freshAt(values, cells, k);
+}
+function noteWritten(name, ok) {
+  const w = warm[name] = warm[name] || { written: {} }, now = Date.now();
+  w.check = (w.check || []).concat(ok.map(p => p.item));
+  ok.forEach(p => { w.written[p.item.row + '|' + p.dot] = now; });
+  if (w.rows) warmUp(name, w.rows);
+}
+/** The first read after a save confirms each row still held that student when it was written; a roster sync could have moved one. */
+function checkWritten(name) {
+  const w = warm[name], items = (w && w.check) || [];
+  if (!w) return;
+  w.check = [];
+  items.forEach(it => {
+    const k = w.rows.indexOf(it.row);
+    try { if (k >= 0) L.locate(name, it, L.freshAt(w.values, w.cells, k)); }
+    catch (e) { notice('Kiểm tra lại dấu đã nộp của ' + it.name + ' lớp ' + name + ': ' + e.message, true); }
+  });
+}
 const QKEY = 'hp_pending', FINAL_ERROR = /đổi học sinh|không còn trong live|chưa dùng sổ mới|không khớp|Không thấy cột/;
 let pending = store.get(QKEY) || [], flushing = false, flushTimer = null, refreshTimer = null;
 /** A saved tick shows in the class's saved copy straight away; dirty means the next open still checks the Sheet. */
@@ -228,7 +276,7 @@ function applyPendingToView() {
 function queue(p) {
   pending = pending.filter(x => !(x.item.key === p.item.key && x.dot === p.dot)).concat(p);
   savePending(); applyPendingToView(); render();
-  clearTimeout(flushTimer); flushTimer = setTimeout(flush, 3000);
+  clearTimeout(flushTimer); flushTimer = setTimeout(flush, 800);
 }
 async function flush() {
   if (flushing || !pending.length) return;
@@ -238,16 +286,16 @@ async function flush() {
   for (const name of Object.keys(groups)) {
     const group = groups[name], rows = group.map(p => p.item.row);
     try {
-      const want = L.freshRanges(name, rows), [values, cells] = await Promise.all([batchGet(want.values), batchGet(want.cells, 'FORMULA')]);
-      const data = [], ok = [];
+      const read = await freshFor(name, group), data = [], ok = [];
       group.forEach((p, k) => {
-        const fresh = L.freshAt(values, cells, k);
+        const fresh = read(p, k);
         try {
           const up = p.kind === 'paid' ? L.planPaid(name, p.item, fresh, p.dot, p.date, p.item.amount) : L.planUnpaid(name, p.item, fresh, p.dot);
           up.forEach(x => data.push(x)); ok.push(p);
         } catch (e) { p.error = e.message; }
       });
       if (data.length) await batchWrite(data);
+      noteWritten(name, ok);
       const done = new Set(ok);
       ok.forEach(patchCache);
       pending = pending.filter(p => !done.has(p));
@@ -262,7 +310,10 @@ async function flush() {
     clearTimeout(refreshTimer);
     refreshTimer = setTimeout(() => { if (view === 'class' && cur && cur.tab === name && !pending.length) refreshClass(name, ++loadSeq); }, 45000);
   }
-  if (pending.some(p => !FINAL_ERROR.test(p.error || ''))) { clearTimeout(flushTimer); flushTimer = setTimeout(flush, 60000); }
+  // Ticks made during this save go straight away; only a failed one waits.
+  clearTimeout(flushTimer);
+  if (pending.some(p => !p.error)) flushTimer = setTimeout(flush, 0);
+  else if (pending.some(p => !FINAL_ERROR.test(p.error))) flushTimer = setTimeout(flush, 60000);
 }
 
 /* ---------- Card (same drawing as the Sheet dialog) ---------- */
@@ -709,9 +760,12 @@ function moDuyet(m) {
   }
   $('dvDate').onchange = () => { if (m.kind === 'nghi' && dvHist) capNhatNghi(m); };
   dvBookList = ['']; veSachDuyet(m);
+  // Preselect what the student already has in the class they come from or go to.
+  const c = store.get('hp_cls_' + (m.from || m.to)), had = c && c.data.items.find(x => x.name === m.name && String(x.eng || '') === String(m.eng || ''));
+  dvDisc = discPicker(had ? had.disc : ''); $('dvDisc').replaceChildren(dvDisc.node);
   $('duyet').dataset.id = m.id; $('duyet').showModal();
 }
-let dvHist = null, dvBookList = [''];
+let dvHist = null, dvBookList = [''], dvDisc = null;
 /** Books are optional for every kind of move: one box, "+ Thêm sách" up to the 5 columns the tabs have. */
 function veSachDuyet(m) {
   const list = bookList || [], price = name => (list.find(b => b.name === name) || { price: 0 }).price;
@@ -755,7 +809,9 @@ async function luuDuyet(onlyBooks) {
   const iso = $('dvDate').value;
   if (!iso) { $('dvErr').textContent = 'Hãy chọn ngày.'; return; }
   const [y, mo, d] = iso.split('-');
-  const input = L.moveInputs(m, { date: d + '/' + mo + '/' + y, books: dvBookList.filter(Boolean), onlyBooks: onlyBooks === true });
+  let disc;
+  try { disc = dvDisc ? dvDisc.read() : ''; } catch (e) { $('dvErr').textContent = e.message; return; }
+  const input = L.moveInputs(m, { date: d + '/' + mo + '/' + y, books: dvBookList.filter(Boolean), onlyBooks: onlyBooks === true, disc });
   $('dvErr').textContent = 'Đang lưu…'; $('dvLuu').disabled = true;
   try {
     await ghiDongMoi(input);
@@ -778,12 +834,20 @@ async function ghiDongMoi(input) {
   const [rowFormulas] = await batchGet([tab + '!A' + source + ':X' + source], 'FORMULA');
   const requests = [];
   (rowFormulas[0] || []).forEach((v, c) => {
-    if (!/^=/.test(String(v)) || input.cells[L.colA1(c + 1)] !== undefined) return;
+    if (!/^=/.test(String(v)) || input.cells[L.colA1(c + 1)] !== undefined || (input.noCopy || []).includes(L.colA1(c + 1))) return;
     requests.push({ copyPaste: { source: { sheetId, startRowIndex: source - 1, endRowIndex: source, startColumnIndex: c, endColumnIndex: c + 1 },
       destination: { sheetId, startRowIndex: target - 1, endRowIndex: target, startColumnIndex: c, endColumnIndex: c + 1 }, pasteType: 'PASTE_FORMULA' } });
   });
+  // A books-only row holds 0 in O instead of the formula, so the row after it takes O from the last row that has one.
+  if (input.tab !== 'HS MỚI' && input.cells.O === undefined && !/^=/.test(String((rowFormulas[0] || [])[14]))) {
+    const [col] = await batchGet([tab + '!O' + input.firstDataRow + ':O' + source], 'FORMULA');
+    let from = -1; col.forEach((r, k) => { if (/^=/.test(String((r || [])[0]))) from = k; });
+    if (from >= 0) requests.push({ copyPaste: { source: { sheetId, startRowIndex: input.firstDataRow + from - 1, endRowIndex: input.firstDataRow + from, startColumnIndex: 14, endColumnIndex: 15 },
+      destination: { sheetId, startRowIndex: target - 1, endRowIndex: target, startColumnIndex: 14, endColumnIndex: 15 }, pasteType: 'PASTE_FORMULA' } });
+  }
   if (requests.length) await api(':batchUpdate', { method: 'POST', body: JSON.stringify({ requests }) }, 2);
-  await batchWrite(Object.keys(input.cells).filter(c => input.cells[c] !== '').map(c => ({ range: tab + '!' + c + target, values: [[input.cells[c]]] })));
+  const fill = v => typeof v === 'string' ? v.replace(/{r}/g, target) : v;
+  await batchWrite(Object.keys(input.cells).filter(c => input.cells[c] !== '').map(c => ({ range: tab + '!' + c + target, values: [[fill(input.cells[c])]] })));
 }
 async function boQuaMove(m) {
   if (!confirm('Bỏ qua ' + fullName(m) + '? App sẽ không nhắc lại thay đổi này.')) return;
@@ -1024,6 +1088,40 @@ const nhacLine = (it, style) => {
   return r ? el('div', { class: 'warn-line', style: style || '' }, [(r.guess ? 'Lớp đã tick từ trước, tính từ hạn thu ' : r.lan ? 'Nhắc lần ' + r.lan + ' ngày ' : 'Gửi ngày ') + ngayNgan(r.from) + ', ' + r.days + ' ngày rồi ' + (r.blank ? 'chưa ghi nộp, xem sao kê rồi nhắc lại.' : 'chưa nộp, đến lúc nhắc lại.'),
     el('button', { class: 'quiet', textContent: 'Đã nhắc lại', onclick: () => { logSent(cur.tab, cur.dot, [it], 'nhac-lai'); render(); } })]) : '';
 };
+/** One box for a discount: the levels in use, none, or another amount. read() gives the value or throws. */
+function discPicker(current) {
+  const levels = [['', 'Không giảm'], ['600000', '600.000 đ/đợt'], ['20%', '20%'], ['50%', '50%'], ['miễn học phí', 'Miễn học phí']];
+  const now = L.discValue(current);
+  if (now && !levels.some(l => l[0] === now)) levels.splice(1, 0, [now, L.discText(now)]);
+  const other = el('input', { placeholder: 'Ví dụ 1000000 hoặc 10%', 'aria-label': 'Mức giảm khác', hidden: true });
+  const sel = el('select', { 'aria-label': 'Mức giảm giá', onchange: () => { other.hidden = sel.value !== 'khac'; if (!other.hidden) other.focus(); } },
+    levels.concat([['khac', 'Số khác…']]).map(l => el('option', { value: l[0], textContent: l[1], selected: l[0] === now })));
+  return { node: el('div', { style: 'display:flex;flex-wrap:wrap;gap:6px;align-items:center' }, [sel, other]), read: () => L.discInput(sel.value === 'khac' ? other.value : sel.value) };
+}
+let discOpen = null;
+async function luuGiam(it, picker, msg) {
+  let disc;
+  try { disc = picker.read(); } catch (e) { msg.textContent = e.message; return; }
+  if (disc === L.discValue(it.disc) || String(disc) === L.discValue(it.disc)) { discOpen = null; return render(); }
+  msg.textContent = 'Đang lưu…';
+  const name = cur.tab;
+  try {
+    const want = L.freshRanges(name, [it.row]), [values, cells, e] = await Promise.all([batchGet(want.values), batchGet(want.cells, 'FORMULA'), batchGet([L.quote(name) + '!E' + it.row], 'FORMULA')]);
+    await batchWrite(L.planDiscount(name, it, L.freshAt(values, cells, 0), disc, ((e[0] || [])[0] || [])[0] || ''));
+    it.disc = disc === '' ? '' : String(disc); discOpen = null;
+    const c = store.get('hp_cls_' + name);
+    if (c) { const x = c.data.items.find(y => y.key === it.key); if (x) x.disc = it.disc; c.dirty = true; store.set('hp_cls_' + name, c); }
+    notice((disc === '' ? 'Đã bỏ giảm giá của ' : 'Đã lưu giảm giá của ') + fullName(it) + '. Số tiền và tin nhắn tự đổi sau khoảng 1 phút.' + (it.paid ? ' Đợt ' + cur.dot + ' đã nộp nên áp dụng từ đợt sau.' : ''));
+    render();
+    clearTimeout(refreshTimer);
+    refreshTimer = setTimeout(() => { if (view === 'class' && cur && cur.tab === name) refreshClass(name, ++loadSeq); }, 60000);
+  } catch (e) { msg.textContent = 'Không lưu được: ' + e.message; }
+}
+function discLine(it) {
+  if (discOpen !== it.key) return el('div', { class: 'r3' }, [el('button', { class: 'quiet', textContent: it.disc ? 'Giảm: ' + L.discText(it.disc) : 'Giảm giá', onclick: () => { discOpen = it.key; render(); } })]);
+  const p = discPicker(it.disc), msg = el('span', { class: 'sub', role: 'status' });
+  return el('div', { class: 'r3', style: 'flex-wrap:wrap' }, [p.node, el('button', { class: 'act', textContent: 'Lưu', onclick: () => luuGiam(it, p, msg) }), el('button', { class: 'quiet', textContent: 'Huỷ', onclick: () => { discOpen = null; render(); } }), msg]);
+}
 function feeRow(it) {
   const d = el('input', { type: 'date', value: picked[it.key] || localDate(), max: localDate(), 'aria-label': 'Ngày nộp của ' + it.name, oninput: e => { picked[it.key] = e.target.value; } });
   const r2 = it.paid
@@ -1036,6 +1134,7 @@ function feeRow(it) {
     it.paid ? '' : el('div', { class: 'r3' }, sent
       ? [el('span', { class: 'sent', textContent: sentText(sent) }), (sentIdx[cur.tab + '|' + cur.dot] || {})[it.key] ? el('button', { class: 'quiet', textContent: 'Bỏ đánh dấu', onclick: () => markStudent(it, false) }) : '']
       : [el('button', { class: 'act', textContent: 'Đánh dấu đã gửi Zalo', onclick: () => markStudent(it, true) })]),
+    discLine(it),
     nhacLine(it),
     it.gop && !it.paid ? el('div', { class: 'warn-line' }, ['Đã gộp đợt ' + it.gop.dot + ': ' + money(it.gop.amount) + (it.gop.blank ? ' vì đợt đó chưa ghi nộp hay chưa.' : ' vì đợt đó chưa nộp.'), el('button', { class: 'quiet', textContent: 'Đợt ' + it.gop.dot + ' đã nộp', onclick: () => tickPrev(it, d.value) })]) : '',
     prevDone[it.key] && it.prev && it.prev.paid && !it.paid ? el('div', { class: 'warn-line' }, ['Vừa ghi đợt ' + it.prev.dot + ' đã nộp ngày ' + it.prev.date + (it.prev.luu ? ' · đang lưu' : '') + '.', el('button', { class: 'quiet', textContent: 'Hoàn tác', onclick: () => boTickPrev(it) })]) : '',
