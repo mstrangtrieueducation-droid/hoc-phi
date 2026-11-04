@@ -79,7 +79,9 @@
       if (sua.msg || sua.amt) { if (!sua.daGhi && tienSheet > 0) soTien = ''; }
       if (soTien && tienSheet > 0 && tienSheet !== Number(soTien)) soTien = String(tienSheet);
       if (!soTien && tienSheet > 0 && tienSheet !== tienAuto && !stale) soTien = String(tienSheet);
-      rows.push({ stale, prevStatus: prevCol > 0 ? String(cell([r], 0, prevCol - 1)).trim() : '', row, name, eng, key, auto, manual: String(sua.msg || '').trim(), soTien, tienSheet, tienAuto, status, date,
+      const prevStatus = prevCol > 0 ? String(cell([r], 0, prevCol - 1)).trim() : '';
+      const prev = prevCol > 0 ? { dot: String(Number(dot) - 1), status: prevStatus, amount: digits(cell([r], 0, prevCol)), date: String(cell([r], 0, prevCol + 1)), paid: isPaid(prevStatus) } : null;
+      rows.push({ stale, prevStatus, prev, row, name, eng, key, auto, manual: String(sua.msg || '').trim(), soTien, tienSheet, tienAuto, status, date,
         paid: isPaid(status), tuSheet: !!soTien && soTien !== String(sua.amt || ''), hadOverride: !!(sua.msg || sua.amt),
         link: (auto.match(/https:\/\/img\.vietqr\.io\/\S+/) || [''])[0], goc: sua.goc });
     }
@@ -90,7 +92,7 @@
       const nhap = tinChung ? tinChung.replace(/^(LỚP [^\n]*)/m, '$1\nHọc viên: ' + nm) : '';
       let msgOut = x.manual || x.auto;
       if (!msgOut && x.soTien) msgOut = nhap;
-      const base = { row: x.row, name: x.name, eng: x.eng, key: x.key, paid: x.paid, status: x.status, date: x.date,
+      const base = { prev: x.prev, row: x.row, name: x.name, eng: x.eng, key: x.key, paid: x.paid, status: x.status, date: x.date,
         tienSheet: x.tienSheet, tienAuto: x.tienAuto, goc: x.goc, hadOverride: x.hadOverride };
       if (!msgOut) return Object.assign(base, { trong: true, msg: '', qr: '', rieng: false, manual: '', soTien: '', auto: '', nhap: boQr(nhap), amount: x.tienSheet, warn: '' });
       // A typed amount wins over the merged one, so the message must not still claim the merge.
@@ -126,6 +128,17 @@
     it.auto = String(it.auto || '').replace(GOP_LINE, '').replace(total, '$1' + fmt(own));
     it.qr = String(it.qr || '').replace(/amount=\d+/, 'amount=' + own);
     it.amount = it.tienAuto = own; it.stale = it.tienSheet > 0 && it.tienSheet !== own; it.gop = null;
+  }
+
+  /** The reverse of dropGop, for undoing that tick. Items whose card does not follow the formula (typed amount, own message, no message) stay as they are. */
+  function addGop(it, dot, amount, blank) {
+    if (it.gop || it.paid || it.trong || it.manual || it.soTien || !(amount > 0)) return;
+    const own = it.amount, sum = own + amount, total = /(Tổng số tiền cần thanh toán là:\s*)[\d.,]+/i, nm = it.name + (it.eng ? ' (' + it.eng + ')' : '');
+    const line = '\n- Con ' + nm + ' còn học phí Đợt ' + dot + ' chưa thanh toán: ' + fmt(amount) + ' đồng, nay gộp chung với học phí đợt này (' + fmt(own) + ' đồng). Nếu Quý Phụ huynh đã chuyển khoản đợt trước, xin gửi lại ảnh giao dịch để cô kiểm tra.';
+    const put = s => String(s || '').replace(/(\n+Tổng số tiền cần thanh toán là:)/i, (m, t) => line + t).replace(total, '$1' + fmt(sum));
+    it.msg = put(it.msg); it.auto = put(it.auto);
+    it.qr = String(it.qr || '').replace(/amount=\d+/, 'amount=' + sum);
+    it.amount = it.tienAuto = sum; it.stale = it.tienSheet > 0 && it.tienSheet !== sum; it.gop = { dot: String(dot), amount, blank: !!blank };
   }
 
   /** Collections already recorded in J:T, newest first. The first row under the header is the live formula for the coming đợt, so it is left out. */
@@ -197,8 +210,9 @@
 
   /** Undo of planPaid: the amount stays because it is still what this student owes. */
   function planUnpaid(tab, it, fresh, dot) {
-    const p = periodCells(tab, it, fresh, dot), up = [{ range: p.lA1(0), values: [['']] }, { range: p.lA1(2), values: [['']] }];
-    if (!isLet(p.vis(0))) up.push({ range: p.vA1(0), values: [['']] });
+    // restore puts back a status the tick replaced, such as a typed "Chưa nộp".
+    const back = it.restore || '', p = periodCells(tab, it, fresh, dot), up = [{ range: p.lA1(0), values: [[back]] }, { range: p.lA1(2), values: [['']] }];
+    if (!isLet(p.vis(0))) up.push({ range: p.vA1(0), values: [[back]] });
     if (!isLet(p.vis(2))) up.push({ range: p.vA1(2), values: [['']] });
     return up;
   }
@@ -450,5 +464,5 @@
     return (students || []).filter(x => !(marks && marks[x.key]));
   }
 
-  return { notMarked, dayOf, dayText, dayNow, calendar, classKey, weekSessions, scheduleGaps, scheduleLessons, weekdays, ackKey, sentIndex, leaveStatus, classifyMoves, moveInputs, qrFromMessage, intakeDue, EXIT_ACCOUNT, NEW_TAB, EXIT_TAB, buildClass, dropGop, classRanges, freshRanges, freshAt, planPaid, planUnpaid, planOverride, findPeriodCol, colA1, quote, fmt, digits, clean, isPaid, todayText, ACTIVE };
+  return { notMarked, dayOf, dayText, dayNow, calendar, classKey, weekSessions, scheduleGaps, scheduleLessons, weekdays, ackKey, sentIndex, leaveStatus, classifyMoves, moveInputs, qrFromMessage, intakeDue, EXIT_ACCOUNT, NEW_TAB, EXIT_TAB, buildClass, dropGop, addGop, classRanges, freshRanges, freshAt, planPaid, planUnpaid, planOverride, findPeriodCol, colA1, quote, fmt, digits, clean, isPaid, todayText, ACTIVE };
 });

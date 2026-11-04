@@ -207,14 +207,19 @@ function patchCache(p) {
   if (!c) return;
   const it = String(c.data.dot) === String(p.dot) ? c.data.items.find(x => x.key === p.item.key) : null;
   if (it) { it.paid = p.kind === 'paid'; it.status = it.paid ? 'Đã nộp' : 'Chưa nộp'; it.date = it.paid ? p.date : ''; if (it.paid && (!it.tienSheet || it.stale)) { it.tienSheet = p.item.amount || 0; it.stale = false; } }
-  if (p.gopOf && String(c.data.dot) === String(p.gopOf)) { const x = c.data.items.find(y => y.key === p.item.key); if (x) L.dropGop(x); }
+  if (p.gopOf && String(c.data.dot) === String(p.gopOf)) { const x = c.data.items.find(y => y.key === p.item.key); if (x) applyPrev(x, p); }
   c.dirty = true;
   store.set('hp_cls_' + p.tab, c);
 }
 function savePending() { store.set(QKEY, pending); renderNotices(); }
+/** A tick or undo on the previous đợt, shown at once: the message formula catches up after the Sheet recalculates. */
+function applyPrev(x, p) {
+  if (x.prev) { x.prev.paid = p.kind === 'paid'; x.prev.status = x.prev.paid ? 'Đã nộp' : p.item.restore || ''; x.prev.date = x.prev.paid ? p.date : ''; }
+  if (p.kind === 'paid') L.dropGop(x); else L.addGop(x, p.dot, p.item.amount, !p.item.restore);
+}
 function applyPendingToView() {
   if (!cur) return;
-  pending.filter(p => p.tab === cur.tab && p.gopOf === cur.dot).forEach(p => { const it = cur.items.find(x => x.key === p.item.key); if (it) L.dropGop(it); });
+  pending.filter(p => p.tab === cur.tab && p.gopOf === cur.dot).forEach(p => { const it = cur.items.find(x => x.key === p.item.key); if (it) { applyPrev(it, p); if (it.prev) it.prev.luu = true; } });
   pending.filter(p => p.tab === cur.tab && p.dot === cur.dot).forEach(p => {
     const it = cur.items.find(x => x.key === p.item.key); if (!it) return;
     it.paid = p.kind === 'paid'; it.status = p.kind === 'paid' ? 'Đã nộp' : 'Chưa nộp'; it.date = p.kind === 'paid' ? p.date : ''; it.dangLuu = true;
@@ -250,7 +255,7 @@ async function flush() {
   }
   flushing = false; savePending();
   if (cur && groups[cur.tab] && !pending.some(p => p.tab === cur.tab)) {
-    cur.items.forEach(x => { x.dangLuu = false; });
+    cur.items.forEach(x => { x.dangLuu = false; if (x.prev) x.prev.luu = false; });
     if (view === 'class') render();
     // The tick already shows, so check it against the Sheet later and without blocking anything.
     const name = cur.tab;
@@ -956,10 +961,14 @@ function sentPanel() {
 function renderThu(box) {
   const groups = { can: cur.items.filter(x => !x.paid), ghi: cur.items.filter(chuaGhi), da: cur.items.filter(x => x.paid), xem: cur.items.filter(x => !x.paid && (x.warn || x.trong || x.gop)) };
   const chip = (id, label) => el('button', { textContent: label + ' ' + groups[id].length, 'aria-pressed': String(filter === id), onclick: () => { filter = id; render(); } });
-  box.append(el('div', { class: 'filters' }, [chip('can', 'Chưa thu'), chip('ghi', 'Chưa ghi'), chip('xem', 'Cần xem lại'), chip('da', 'Đã nộp')]));
+  const before = cur.items.filter(x => x.prev && (x.prev.amount > 0 || x.prev.paid)).sort((a, b) => a.prev.paid - b.prev.paid);
+  if (filter === 'truoc' && !before.length) filter = 'can';
+  groups.truoc = before;
+  box.append(el('div', { class: 'filters' }, [chip('can', 'Chưa thu'), chip('ghi', 'Chưa ghi'), chip('xem', 'Cần xem lại'), chip('da', 'Đã nộp'),
+    before.length ? el('button', { textContent: 'Đợt ' + before[0].prev.dot + ' chưa nộp ' + before.filter(x => !x.prev.paid).length, 'aria-pressed': String(filter === 'truoc'), onclick: () => { filter = 'truoc'; render(); } }) : '']));
   const list = groups[filter];
   if (!list.length) { box.append(el('div', { class: 'empty', textContent: filter === 'can' ? 'Lớp này đã nộp đủ đợt ' + cur.dot + '.' : filter === 'da' ? 'Chưa có em nào nộp đợt ' + cur.dot + '.' : filter === 'ghi' ? 'Không có em nào chưa ghi.' : 'Không có em nào cần xem lại.' })); return; }
-  box.append(el('div', { class: 'fee-list' }, list.map(feeRow)));
+  box.append(el('div', { class: 'fee-list' }, list.map(filter === 'truoc' ? prevRow : feeRow)));
 }
 function feeRow(it) {
   const d = el('input', { type: 'date', value: picked[it.key] || localDate(), max: localDate(), 'aria-label': 'Ngày nộp của ' + it.name, oninput: e => { picked[it.key] = e.target.value; } });
@@ -973,7 +982,8 @@ function feeRow(it) {
     it.paid ? '' : el('div', { class: 'r3' }, sent
       ? [el('span', { class: 'sent', textContent: sentText(sent) }), (sentIdx[cur.tab + '|' + cur.dot] || {})[it.key] ? el('button', { class: 'quiet', textContent: 'Bỏ đánh dấu', onclick: () => markStudent(it, false) }) : '']
       : [el('button', { class: 'act', textContent: 'Đánh dấu đã gửi Zalo', onclick: () => markStudent(it, true) })]),
-    it.gop && !it.paid ? el('div', { class: 'warn-line' }, ['Đã gộp đợt ' + it.gop.dot + ': ' + money(it.gop.amount) + (it.gop.blank ? ' vì đợt đó chưa ghi nộp hay chưa.' : ' vì đợt đó chưa nộp.'), el('button', { class: 'quiet', textContent: 'Đợt ' + it.gop.dot + ' đã nộp', onclick: () => tickGop(it, d.value) })]) : '',
+    it.gop && !it.paid ? el('div', { class: 'warn-line' }, ['Đã gộp đợt ' + it.gop.dot + ': ' + money(it.gop.amount) + (it.gop.blank ? ' vì đợt đó chưa ghi nộp hay chưa.' : ' vì đợt đó chưa nộp.'), el('button', { class: 'quiet', textContent: 'Đợt ' + it.gop.dot + ' đã nộp', onclick: () => tickPrev(it, d.value) })]) : '',
+    prevDone[it.key] && it.prev && it.prev.paid && !it.paid ? el('div', { class: 'warn-line' }, ['Vừa ghi đợt ' + it.prev.dot + ' đã nộp ngày ' + it.prev.date + (it.prev.luu ? ' · đang lưu' : '') + '.', el('button', { class: 'quiet', textContent: 'Hoàn tác', onclick: () => boTickPrev(it) })]) : '',
     it.warn ? el('div', { class: 'warn-line' }, [it.warn, el('button', { class: 'quiet', textContent: 'Xem và sửa', onclick: () => moSua(it) })]) : '',
     !it.warn && it.trong ? el('div', { class: 'warn-line' }, ['Chưa có tin hoặc số tiền đợt này.', el('button', { class: 'quiet', textContent: 'Nhập', onclick: () => moSua(it) })]) : '']);
 }
@@ -985,12 +995,31 @@ function tick(it, iso) {
   delete picked[it.key];
   queue({ kind: 'paid', tab: cur.tab, dot: cur.dot, date: d + '/' + m + '/' + y, item: { key: it.key, row: it.row, name: it.name, eng: it.eng, amount: it.amount, stale: it.stale, tienSheet: it.tienSheet } });
 }
+/** Status each previous-đợt tick replaced, so its undo can put it back. */
+const prevDone = {};
 /** The previous đợt was paid after all: tick that đợt, and the formula takes it back out of this one. */
-function tickGop(it, iso) {
+function tickPrev(it, iso) {
   if (!iso) return notice('Hãy chọn ngày nộp.', true);
-  const g = it.gop, [y, m, d] = iso.split('-'), date = d + '/' + m + '/' + y;
-  if (!confirm('Ghi ' + fullName(it) + ' đã nộp đợt ' + g.dot + ' ngày ' + date + '?\nSố cần thu đợt ' + cur.dot + ' sẽ còn ' + money(it.amount - g.amount) + '.')) return;
-  queue({ kind: 'paid', tab: cur.tab, dot: g.dot, gopOf: cur.dot, date, item: { key: it.key, row: it.row, name: it.name, eng: it.eng, amount: g.amount } });
+  const p = it.prev, [y, m, d] = iso.split('-'), date = d + '/' + m + '/' + y;
+  const note = it.gop ? '\nSố cần thu đợt ' + cur.dot + ' sẽ còn ' + money(it.amount - it.gop.amount) + '.'
+    : it.paid ? '\nEm này đã tick đợt ' + cur.dot + '. Nếu số đó đã gộp cả đợt ' + p.dot + ' thì đừng tick, kẻo hoá đơn tính trùng.' : '';
+  if (!confirm('Ghi ' + fullName(it) + ' đã nộp đợt ' + p.dot + ' ngày ' + date + '?' + note)) return;
+  prevDone[it.key] = { status: p.status };
+  queue({ kind: 'paid', tab: cur.tab, dot: p.dot, gopOf: cur.dot, date, item: { key: it.key, row: it.row, name: it.name, eng: it.eng, amount: p.amount } });
+}
+function boTickPrev(it) {
+  const p = it.prev, back = prevDone[it.key];
+  if (!confirm('Bỏ tick đã nộp đợt ' + p.dot + ' của ' + fullName(it) + '? Ngày nộp sẽ bị xoá.' + (it.paid ? '' : '\nĐợt ' + p.dot + ' sẽ gộp lại vào đợt ' + cur.dot + '.'))) return;
+  delete prevDone[it.key];
+  queue({ kind: 'unpaid', tab: cur.tab, dot: p.dot, gopOf: cur.dot, item: { key: it.key, row: it.row, name: it.name, eng: it.eng, amount: p.amount, restore: back ? back.status : '' } });
+}
+function prevRow(it) {
+  const p = it.prev, d = el('input', { type: 'date', value: localDate(), max: localDate(), 'aria-label': 'Ngày nộp đợt ' + p.dot + ' của ' + it.name });
+  return el('div', { class: 'row card' }, [
+    el('div', { class: 'r1' }, [el('span', { class: 'nm', textContent: fullName(it) }), el('span', { class: 'amt', textContent: money(p.amount) || 'Chưa có số' })]),
+    el('div', { class: 'r2' }, p.paid
+      ? [el('span', { class: 'chip ok', textContent: 'Đã nộp ' + p.date + (p.luu ? ' · đang lưu' : '') }), el('div', { class: 'fill' }), el('button', { class: 'quiet', textContent: 'Bỏ tick', onclick: () => boTickPrev(it) })]
+      : [el('span', { class: 'chip idle', textContent: p.status || 'Chưa ghi' }), el('div', { class: 'fill' }), d, el('button', { class: 'tick', textContent: 'Đã nộp', onclick: () => tickPrev(it, d.value) })])]);
 }
 function boTick(it) {
   if (!confirm('Bỏ tick đã nộp của ' + fullName(it) + '? Ngày nộp sẽ bị xoá.')) return;
