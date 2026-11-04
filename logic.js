@@ -342,7 +342,7 @@
   function weekSessions(a, d, m, toggles) {
     const head = (d || []).findIndex((r, i) => clean((r || [])[0]) === 'CLASS' && clean(((m || [])[i] || [])[0]) === 'CLASS STATUS');
     if (head < 0) return [];
-    const flags = (toggles || []).find(r => r && /^(học|nghỉ)/i.test(String(r[0] || ''))) || [], out = [];
+    const flags = (toggles || []).find(r => r && /^(học|nghỉ)$/i.test(String(r[0] || '').trim())) || [], out = [];
     let day = NaN;
     for (let i = head + 1; i < d.length; i++) {
       const n = dayOf((a[i] || [])[0]);
@@ -372,6 +372,12 @@
     return out.sort((x, y) => x.day - y.day);
   }
 
+  const WEEKDAY = ['Thứ 2', 'Thứ 3', 'Thứ 4', 'Thứ 5', 'Thứ 6', 'Thứ 7', 'Chủ nhật'];
+  /** The weekdays a list of days falls on, Monday first, e.g. 'Thứ 4, Thứ 7'. */
+  function weekdays(days) {
+    return [...new Set((days || []).map(n => (n + 3) % 7))].sort((a, b) => a - b).map(k => WEEKDAY[k]).join(', ');
+  }
+
   /** Years that have lessons but no row in NGHI_LE, with the classes reaching into them. */
   function holidayGaps(holidays, lessonsByClass) {
     const yearOf = day => new Date(day * 86400000).getUTCFullYear(), have = new Set(), out = {};
@@ -382,5 +388,5 @@
     return out;
   }
 
-  return { dayOf, dayText, dayNow, calendar, classKey, weekSessions, scheduleGaps, holidayGaps, leaveStatus, classifyMoves, moveInputs, qrFromMessage, intakeDue, EXIT_ACCOUNT, NEW_TAB, EXIT_TAB, buildClass, classRanges, freshRanges, freshAt, planPaid, planUnpaid, planOverride, findPeriodCol, colA1, quote, fmt, digits, clean, isPaid, todayText, ACTIVE };
+  return { dayOf, dayText, dayNow, calendar, classKey, weekSessions, scheduleGaps, weekdays, holidayGaps, leaveStatus, classifyMoves, moveInputs, qrFromMessage, intakeDue, EXIT_ACCOUNT, NEW_TAB, EXIT_TAB, buildClass, classRanges, freshRanges, freshAt, planPaid, planUnpaid, planOverride, findPeriodCol, colA1, quote, fmt, digits, clean, isPaid, todayText, ACTIVE };
 });

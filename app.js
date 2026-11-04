@@ -366,15 +366,22 @@ async function loadSchedule(force) {
     const byClass = {};
     for (let k = 0; k < weeks.length; k += 5) {
       const part = weeks.slice(k, k + 5);
-      const got = await batchGetAt(SCHEDULE_API, part.reduce((a, w) => a.concat(['A56:G58', 'A56:A320', 'D56:D320', 'M56:M320'].map(r => L.quote(w.title) + '!' + r)), []));
+      // The header row moved from 39 to 58 on the 19.10 tab, so each column is read from above both.
+      const got = await batchGetAt(SCHEDULE_API, part.reduce((a, w) => a.concat(['A30:G60', 'A30:A320', 'D30:D320', 'M30:M320'].map(r => L.quote(w.title) + '!' + r)), []));
       part.forEach((w, n) => {
         const [toggles, a, d, m] = got.slice(n * 4, n * 4 + 4);
         L.weekSessions(a, d, m, toggles).filter(s => s.day >= w.from && s.day <= w.to).forEach(s => { (byClass[s.cls] = byClass[s.cls] || []).push(s); });
       });
     }
-    const gaps = {};
-    tabs.forEach(t => { const g = L.scheduleGaps(lessons[t], byClass[L.classKey(t)], weeks); if (g.length) gaps[t] = g; });
-    sched = { gaps, years: L.holidayGaps(cal.holidays, lessons), weeks: weeks.length, last: weeks.length ? Math.max(...weeks.map(w => w.to)) : 0, at: Date.now() };
+    const gaps = {}, days = {};
+    tabs.forEach(t => {
+      const g = L.scheduleGaps(lessons[t], byClass[L.classKey(t)], weeks);
+      if (!g.length) return;
+      gaps[t] = g;
+      const from = Math.min(...lessons[t]), to = Math.max(...weeks.map(w => w.to));
+      days[t] = { file: L.weekdays(lessons[t]), schedule: L.weekdays((byClass[L.classKey(t)] || []).filter(s => !s.off && s.day >= from && s.day <= to).map(s => s.day)) };
+    });
+    sched = { gaps, days, years: L.holidayGaps(cal.holidays, lessons), weeks: weeks.length, last: weeks.length ? Math.max(...weeks.map(w => w.to)) : 0, at: Date.now() };
     store.set('hp_sched', sched);
   } catch (e) {
     sched = { error: /permission|caller does not have/i.test(e.message) ? 'Tài khoản này chưa có quyền xem file Schedule.' : 'Chưa đọc được Schedule: ' + e.message };
@@ -399,7 +406,10 @@ function calRow(x) {
     el('div', { class: 'cal-line' }, ['Thu đợt ' + x.dot + ', hạn ', el('strong', { textContent: dueText(x) })]),
     el('div', { class: 'cal-line sub', textContent: (x.start && x.end ? 'Đợt ' + prev + ' học ' + x.start + ' đến ' + x.end : '') }),
     el('div', { class: 'cal-line sub', textContent: L.fmt(x.total) + ' đ' + (x.book ? ' · ' + x.book : '') + (s ? ' · đã nộp ' + s.paid + '/' + s.total : '') })];
-  gaps.forEach(g => kids.push(el('div', { class: 'warn-line', textContent: L.dayText(g.day) + ': ' + GAP_TEXT[g.type] })));
+  // Many differences mean the class's weekdays are wrong rather than single sessions.
+  const days = sched && sched.days && sched.days[x.tab];
+  if (gaps.length > 3 && days && days.file !== days.schedule) kids.push(el('div', { class: 'warn-line', textContent: 'Lệch thứ học: file học phí tính ' + days.file + ', Schedule học ' + days.schedule + '. Ngày cuối đợt và hạn thu ở trên có thể sai.' }));
+  else gaps.forEach(g => kids.push(el('div', { class: 'warn-line', textContent: L.dayText(g.day) + ': ' + GAP_TEXT[g.type] })));
   return el('button', { class: 'class cal-row', onclick: () => { filter = 'can'; tab = 'thu'; openClass(x.tab); } }, kids);
 }
 function renderCal(box) {
