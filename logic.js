@@ -513,8 +513,8 @@
   const REMIND_AFTER = 7, REMIND_EVERY = 2;
   /** The owner chose not to collect from this student this đợt, so nothing is due and nothing should nag. */
   const deferred = x => !x.paid && /chưa thu ngay|chua thu ngay/i.test(String(x.status || ''));
-  /** Free tuition: nothing to collect and nothing paid, so neither list fits. A message written by hand for this student still counts as a bill. */
-  const free = x => !x.paid && !x.manual && /miễn|mien/i.test(String(x.disc || ''));
+  /** Free tuition is never counted, whatever else the row says: the owner's rule. */
+  const free = x => /miễn|mien/i.test(String(x.disc || ''));
   /** The log writes "dd/mm hh:mm" with no year: it is the latest such date not after today. */
   function sentDay(at, today) {
     const m = String(at).match(/^(\d{1,2})\/(\d{1,2})/);

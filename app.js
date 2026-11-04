@@ -102,6 +102,7 @@ let view = 'home', tab = 'thu', filter = 'can', query = '', loadingAll = false, 
 const picked = {}; // dates chosen but not yet ticked, so a quiet refresh cannot reset them to today
 let noticeText = '', noticeErr = false;
 const canThu = x => !x.paid && !L.deferred(x) && !L.free(x);
+const daThu = x => x.paid && !L.free(x);
 const zaloItems = () => cur ? cur.items.filter(canThu) : [];
 const fullName = x => x.name + (x.eng ? ' (' + x.eng + ')' : '');
 const money = n => n ? L.fmt(n) + ' đ' : '';
@@ -109,7 +110,7 @@ const money = n => n ? L.fmt(n) + ' đ' : '';
 // A blank status with no date means not paid or not recorded yet (owner, 04/11/2026), so it must not read as "Chưa nộp".
 const chuaGhi = x => canThu(x) && !x.trong && !x.date && !String(x.status || '').trim();
 function summarize(data) {
-  const paid = data.items.filter(x => x.paid), due = data.items.filter(canThu), blank = due.filter(chuaGhi);
+  const paid = data.items.filter(daThu), due = data.items.filter(canThu), blank = due.filter(chuaGhi);
   return { paid: paid.length, total: paid.length + due.length, got: paid.reduce((s, x) => s + (x.tienSheet || 0), 0),
     owe: due.reduce((s, x) => s + (x.amount || 0), 0), warn: due.filter(x => x.warn).length, none: due.filter(x => x.trong).length,
     blank: blank.length, blankOwe: blank.reduce((s, x) => s + (x.amount || 0), 0) };
@@ -1072,7 +1073,7 @@ function sentPanel() {
 }
 
 function renderThu(box) {
-  const groups = { can: cur.items.filter(canThu), ghi: cur.items.filter(chuaGhi), da: cur.items.filter(x => x.paid), hoan: cur.items.filter(x => L.deferred(x) && !L.free(x)), mien: cur.items.filter(L.free), xem: cur.items.filter(x => canThu(x) && (x.warn || x.trong || x.gop || nhacOf(x))) };
+  const groups = { can: cur.items.filter(canThu), ghi: cur.items.filter(chuaGhi), da: cur.items.filter(daThu), hoan: cur.items.filter(x => L.deferred(x) && !L.free(x)), mien: cur.items.filter(L.free), xem: cur.items.filter(x => canThu(x) && (x.warn || x.trong || x.gop || nhacOf(x))) };
   if ((filter === 'hoan' && !groups.hoan.length) || (filter === 'mien' && !groups.mien.length)) filter = 'can';
   const chip = (id, label) => el('button', { textContent: label + ' ' + groups[id].length, 'aria-pressed': String(filter === id), onclick: () => { filter = id; render(); } });
   const before = cur.items.filter(x => x.prev && !L.free(x) && (x.prev.amount > 0 || x.prev.paid)).sort((a, b) => a.prev.paid - b.prev.paid);
