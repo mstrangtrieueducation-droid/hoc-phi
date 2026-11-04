@@ -427,8 +427,11 @@ const GAP_TEXT = {
   thieu: 'file học phí tính một buổi, nhưng Schedule không có lớp này',
   them: 'Schedule có học, nhưng file học phí không tính buổi này'
 };
+// Owner's decision on 04/11/2026: these classes take the Schedule's weekdays when this đợt rolls over, so the difference until then is expected.
+const DOI_DOT_SAU = { 'KIDS 10': '12', 'FIGHTER 6': '9' };
+const gapsToShow = x => (sched && sched.gaps && sched.gaps[x.tab] && DOI_DOT_SAU[x.tab] !== x.dot ? sched.gaps[x.tab] : []);
 function calRow(x) {
-  const c = store.get('hp_cls_' + x.tab), s = c && String(c.data.dot) === x.dot ? summarize(c.data) : null, gaps = (sched && sched.gaps && sched.gaps[x.tab]) || [];
+  const c = store.get('hp_cls_' + x.tab), s = c && String(c.data.dot) === x.dot ? summarize(c.data) : null, gaps = gapsToShow(x);
   const chipClass = x.group === 'den' || x.group === 'qua' ? 'chip' : x.group === 'sap' ? 'chip warn-soft' : 'chip idle';
   const prev = Number(x.dot) - 1, kids = [
     el('div', { class: 'top' }, [el('b', { textContent: x.tab }), el('span', { class: chipClass, textContent: x.state })]),
@@ -437,6 +440,7 @@ function calRow(x) {
     el('div', { class: 'cal-line sub', textContent: L.fmt(x.total) + ' đ' + (x.book ? ' · ' + x.book : '') + (s ? ' · đã nộp ' + s.paid + '/' + s.total : '') })];
   // Many differences mean the class's weekdays are wrong rather than single sessions.
   const days = sched && sched.days && sched.days[x.tab];
+  if (DOI_DOT_SAU[x.tab] === x.dot && days) kids.push(el('div', { class: 'cal-line sub', textContent: 'Đợt đang học giữ nguyên ngày. Từ đợt tới học ' + days.schedule + ' theo Schedule.' }));
   if (gaps.length > 3 && days && days.file !== days.schedule) kids.push(el('div', { class: 'warn-line', textContent: 'Lệch thứ học: file học phí tính ' + days.file + ', Schedule học ' + days.schedule + '. Ngày cuối đợt và hạn thu ở trên có thể sai.' }));
   else gaps.forEach(g => kids.push(el('div', { class: 'warn-line', textContent: L.dayText(g.day) + ': ' + GAP_TEXT[g.type] })));
   return el('button', { class: 'class cal-row', onclick: () => { filter = 'can'; tab = 'thu'; openClass(x.tab); } }, kids);
@@ -450,7 +454,7 @@ function renderCal(box) {
   if (schedLoading) lines.push(el('div', { class: 'notice', textContent: 'Đang đối chiếu với Schedule…' }));
   if (sched && sched.error) lines.push(el('div', { class: 'notice warn', textContent: sched.error }));
   else if (sched && sched.at) {
-    const n = Object.keys(sched.gaps).length, lastDay = sched.last ? L.dayText(sched.last) : '';
+    const n = cal.list.filter(x => gapsToShow(x).length).length, lastDay = sched.last ? L.dayText(sched.last) : '';
     lines.push(el('div', { class: n ? 'notice warn' : 'notice', textContent: (n ? n + ' lớp có buổi lệch với Schedule, xem ở từng lớp bên dưới.' : 'Các buổi của đợt đang học khớp với Schedule.') + ' Schedule mới có tuần đến ' + lastDay + ', các buổi sau đó vẫn là dự kiến.' }));
     Object.keys(sched.years).forEach(y => lines.push(el('div', { class: 'notice warn', textContent: 'Tab NGHI_LE chưa có ngày nghỉ năm ' + y + '. Nếu nghỉ Tết dương hoặc Tết âm, ngày cuối đợt và hạn thu của ' + sched.years[y].join(', ') + ' sẽ còn đổi.' })));
   }
