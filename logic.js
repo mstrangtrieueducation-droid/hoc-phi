@@ -99,7 +99,7 @@
         soTien: x.soTien, auto: boQr(x.auto), amount: Number(tien) || x.tienSheet || x.tienAuto, warn });
     });
     const label = name => { let out = ''; top.forEach(r => (r || []).forEach((v, c) => { if (v === name && !out) out = String(r[c + 1] || ''); })); return out; };
-    return { tab, lop: 'LỚP ' + tab, dot, statusCol, items, dueDate: label('Ngày cần thu tiền'), dueState: label('Trạng thái thu tiền') };
+    return { tab, lop: 'LỚP ' + tab, dot, statusCol, items, nextDot: label('Đợt học cần thu'), dueDate: label('Ngày cần thu tiền'), dueState: label('Trạng thái thu tiền') };
   }
 
   /**
@@ -314,5 +314,73 @@
 
   function todayText(d) { const p = n => ('0' + n).slice(-2); return p(d.getDate()) + '/' + p(d.getMonth() + 1) + '/' + d.getFullYear(); }
 
-  return { leaveStatus, classifyMoves, moveInputs, qrFromMessage, intakeDue, EXIT_ACCOUNT, NEW_TAB, EXIT_TAB, buildClass, classRanges, freshRanges, freshAt, planPaid, planUnpaid, planOverride, findPeriodCol, colA1, quote, fmt, digits, clean, isPaid, todayText, ACTIVE };
+  /** Day number of 'd/m/yyyy' or 'dd.mm.yyyy'; NaN when the text holds no real date. */
+  function dayOf(s) {
+    const m = String(s).match(/(\d{1,2})[/.](\d{1,2})[/.](\d{4})/);
+    if (!m) return NaN;
+    const t = Date.UTC(+m[3], +m[2] - 1, +m[1]), d = new Date(t);
+    return d.getUTCDate() === +m[1] && d.getUTCMonth() === +m[2] - 1 ? t / 86400000 : NaN;
+  }
+  const dayText = n => { const d = new Date(n * 86400000), p = x => ('0' + x).slice(-2); return p(d.getUTCDate()) + '/' + p(d.getUTCMonth() + 1) + '/' + d.getUTCFullYear(); };
+  const dayNow = now => Date.UTC(now.getFullYear(), now.getMonth(), now.getDate()) / 86400000;
+
+  const CAL_GROUP = { 'ĐẾN HẠN THU': 'den', 'ĐÃ QUA': 'qua', 'SẮP THU': 'sap', 'CHƯA ĐẾN': 'chua' };
+  /** TỔNG HỢP rows (A:K, from row 3) as a list sorted by due date. The status is the Sheet's own. Rows with no đợt (T1, TV2) are left out. */
+  function calendar(rows) {
+    return (rows || []).filter(r => r && r[0] && r[2] && !isNaN(dayOf(r[5]))).map(r => {
+      const state = String(r[10] || '').trim();
+      return { tab: String(r[0]).trim(), dot: String(r[2]), start: String(r[3] || ''), end: String(r[4] || ''), due: String(r[5]),
+        book: /^0?$/.test(String(r[6] || '').trim()) ? '' : String(r[6]).trim(), total: digits(r[9]), state, group: CAL_GROUP[state] || 'chua' };
+    }).sort((a, b) => dayOf(a.due) - dayOf(b.due));
+  }
+
+  const classKey = s => clean(s).replace(/\s+/g, '');
+  /**
+   * Tuition-class sessions of one Schedule week. a, d, m are columns A, D, M read from the same first row; toggles holds the rows
+   * around the whole-day "Học / Nghỉ" row. A class marked "Nghỉ học", or on a day marked "Nghỉ", counts as off.
+   */
+  function weekSessions(a, d, m, toggles) {
+    const head = (d || []).findIndex((r, i) => clean((r || [])[0]) === 'CLASS' && clean(((m || [])[i] || [])[0]) === 'CLASS STATUS');
+    if (head < 0) return [];
+    const flags = (toggles || []).find(r => r && /^(học|nghỉ)/i.test(String(r[0] || ''))) || [], out = [];
+    let day = NaN;
+    for (let i = head + 1; i < d.length; i++) {
+      const n = dayOf((a[i] || [])[0]);
+      if (!isNaN(n)) day = n;
+      const cls = classKey((d[i] || [])[0]), status = String((m[i] || [])[0] || '').trim();
+      if (isNaN(day) || !/^(KIDS|FIGHTER|TA)\d+$/.test(cls) || !/^(Học|Nghỉ học)$/.test(status)) continue;
+      out.push({ cls, day, off: status === 'Nghỉ học' || /^nghỉ/i.test(String(flags[(day + 3) % 7] || '')) });
+    }
+    return out;
+  }
+
+  /**
+   * Where the tuition file's lessons of one class differ from the Schedule, only inside weeks the Schedule already has.
+   * nghi: counted as a lesson but the Schedule is off; thieu: counted but the class is not on the Schedule; them: on the Schedule but not counted.
+   */
+  function scheduleGaps(lessons, sessions, weeks) {
+    const covered = day => (weeks || []).some(w => w.from <= day && day <= w.to), byDay = new Map(), out = [];
+    (sessions || []).forEach(s => byDay.set(s.day, byDay.has(s.day) ? byDay.get(s.day) && s.off : s.off));
+    (lessons || []).filter(covered).forEach(day => {
+      if (!byDay.has(day)) out.push({ day, type: 'thieu' });
+      else if (byDay.get(day)) out.push({ day, type: 'nghi' });
+    });
+    if ((lessons || []).length) {
+      const min = Math.min(...lessons), max = Math.max(...lessons), known = new Set(lessons);
+      byDay.forEach((off, day) => { if (!off && day >= min && day <= max && !known.has(day)) out.push({ day, type: 'them' }); });
+    }
+    return out.sort((x, y) => x.day - y.day);
+  }
+
+  /** Years that have lessons but no row in NGHI_LE, with the classes reaching into them. */
+  function holidayGaps(holidays, lessonsByClass) {
+    const yearOf = day => new Date(day * 86400000).getUTCFullYear(), have = new Set(), out = {};
+    (holidays || []).forEach(v => { const n = dayOf(v); if (!isNaN(n)) have.add(yearOf(n)); });
+    Object.keys(lessonsByClass || {}).forEach(tab => {
+      new Set(lessonsByClass[tab].map(yearOf)).forEach(y => { if (!have.has(y)) (out[y] = out[y] || []).push(tab); });
+    });
+    return out;
+  }
+
+  return { dayOf, dayText, dayNow, calendar, classKey, weekSessions, scheduleGaps, holidayGaps, leaveStatus, classifyMoves, moveInputs, qrFromMessage, intakeDue, EXIT_ACCOUNT, NEW_TAB, EXIT_TAB, buildClass, classRanges, freshRanges, freshAt, planPaid, planUnpaid, planOverride, findPeriodCol, colA1, quote, fmt, digits, clean, isPaid, todayText, ACTIVE };
 });

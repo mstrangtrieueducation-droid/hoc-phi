@@ -155,7 +155,20 @@
   .books { display: grid; gap: 6px; }
   .books select { width: 100%; min-height: 44px; padding: 6px 10px; border: 1px solid var(--line); border-radius: 10px; background: var(--bg); }
   .row .primary { min-height: 40px; }
-  #btnMoves { white-space: nowrap; }
+  #btnMoves, #btnCal { white-space: nowrap; }
+  .due-banner { display: block; width: 100%; margin-bottom: 12px; padding: 12px 14px; text-align: left; font-weight: 400; background: var(--warn-soft); color: var(--warn); border-color: var(--warn-soft); }
+  .due-banner strong { font-weight: 700; }
+  .cal-row .top { margin-bottom: 6px; align-items: center; }
+  .cal-line { font-size: 14px; }
+  .cal-line.sub { font-size: 13px; }
+  .cal-line:empty { display: none; }
+  .cal-line strong { font-weight: 600; }
+  .chip.warn-soft { background: var(--brand-soft); color: var(--brand); }
+  @media (max-width: 640px) {
+    .bar { flex-wrap: wrap; }
+    #btnCal, #btnMoves { flex: 1; }
+    .spacer { display: none; }
+  }
 
   @media (min-width: 860px) {
     .zalo { grid-template-columns: 300px minmax(0, 1fr); align-items: start; }
@@ -188,6 +201,7 @@
       <button id="home" class="brand" aria-label="Về trang tổng quan"><i aria-hidden="true">₫</i><span>Học phí</span></button>
       <select id="lop" aria-label="Chọn lớp"></select>
       <button id="reload" aria-label="Tải lại số mới" title="Tải lại số mới">↻</button>
+      <button id="btnCal">Lịch thu</button>
       <button id="btnMoves">Biến động</button>
       <div class="spacer"></div>
       <button id="btnOut" class="quiet">Đăng xuất</button>

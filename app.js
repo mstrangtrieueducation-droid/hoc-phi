@@ -1,6 +1,7 @@
 // Web app UI. All data comes from the Sheets API with the signed-in user's own Google permission; there is no server.
 const CONFIG = window.HP_CONFIG;
 const SHEET_API = 'https://sheets.googleapis.com/v4/spreadsheets/' + CONFIG.sheetId;
+const SCHEDULE_API = 'https://sheets.googleapis.com/v4/spreadsheets/' + CONFIG.scheduleId;
 const L = window.HpLogic;
 const $ = id => document.getElementById(id);
 const store = {
@@ -36,7 +37,7 @@ async function api(path, options, attempts) {
   for (let k = 0; k < (attempts || 3); k++) {
     if (k) await new Promise(r => setTimeout(r, 4000 * k));
     try {
-      const r = await fetch(SHEET_API + path, o);
+      const r = await fetch(path.startsWith('https:') ? path : SHEET_API + path, o);
       if (r.ok) return r.json();
       const body = await r.json().catch(() => ({}));
       if (r.status === 401) { token = null; showLogin(true); throw new Error('Cần đăng nhập lại.'); }
@@ -46,12 +47,14 @@ async function api(path, options, attempts) {
   }
   throw last;
 }
-const batchGet = (ranges, render) => api('/values:batchGet?valueRenderOption=' + (render || 'FORMATTED_VALUE') + '&' + ranges.map(r => 'ranges=' + encodeURIComponent(r)).join('&')).then(d => (d.valueRanges || []).map(x => x.values || []));
+const batchGetAt = (base, ranges, render) => api(base + '/values:batchGet?valueRenderOption=' + (render || 'FORMATTED_VALUE') + '&' + ranges.map(r => 'ranges=' + encodeURIComponent(r)).join('&')).then(d => (d.valueRanges || []).map(x => x.values || []));
+const batchGet = (ranges, render) => batchGetAt('', ranges, render);
 const batchWrite = data => api('/values:batchUpdate', { method: 'POST', body: JSON.stringify({ valueInputOption: 'USER_ENTERED', data }) }, 2);
 
 /* ---------- State ---------- */
 let classes = [], cur = null, curAt = 0, curFresh = false, loadSeq = 0, i = 0, step = 0, cards = {}, qrCache = {};
-let view = 'home', tab = 'thu', filter = 'can', query = '', loadingAll = false, loadedCount = 0;
+let view = 'home', tab = 'thu', filter = 'can', query = '', loadingAll = false, loadedCount = 0, loadTotal = 0;
+const picked = {}; // dates chosen but not yet ticked, so a quiet refresh cannot reset them to today
 let noticeText = '', noticeErr = false;
 const zaloItems = () => cur ? cur.items.filter(x => !x.paid) : [];
 const fullName = x => x.name + (x.eng ? ' (' + x.eng + ')' : '');
@@ -66,11 +69,19 @@ function summarize(data) {
 }
 
 /* ---------- Reading ---------- */
-async function readKho() { const [rows] = await batchGet(["'_TRO_LY_ZALO'!A:B"]); return rows; }
+const FRESH_MS = 300000, GROUP = 6;
+let khoMemo = null;
+async function readKho(force) {
+  if (!force && khoMemo && Date.now() - khoMemo.at < FRESH_MS) return khoMemo.rows;
+  const [rows] = await batchGet(["'_TRO_LY_ZALO'!A:B"]);
+  khoMemo = { rows, at: Date.now() };
+  return rows;
+}
 function khoMap(rows) { const map = {}; rows.forEach(r => { if (r[0]) map[r[0]] = r[1]; }); return map; }
-async function readClass(name, kho) {
-  const [parts, rows] = await Promise.all([batchGet(L.classRanges(name)), kho ? Promise.resolve(kho) : readKho()]);
-  return L.buildClass(name, { top: parts[0], hist: parts[1], track: parts[2], msg: parts[3], kho: khoMap(rows) });
+const buildFrom = (name, parts, rows) => L.buildClass(name, { top: parts[0], hist: parts[1], track: parts[2], msg: parts[3], kho: khoMap(rows) });
+async function readClass(name) {
+  const [parts, rows] = await Promise.all([batchGet(L.classRanges(name)), readKho()]);
+  return buildFrom(name, parts, rows);
 }
 function setCurrent(data, at, fresh) {
   const keepKey = cur && cur.tab === data.tab ? (zaloItems()[i] || {}).key : null;
@@ -80,44 +91,78 @@ function setCurrent(data, at, fresh) {
   i = keepKey ? Math.max(0, z.findIndex(x => x.key === keepKey)) : 0;
   render();
 }
-async function openClass(name) {
+// The saved copy shows at once, so a click never waits on the Sheet; a copy older than FRESH_MS is replaced quietly when the read returns.
+async function openClass(name, force) {
   const seq = ++loadSeq;
   view = 'class'; step = 0;
   store.set('hp_last_class', name); $('lop').value = name;
-  const cached = store.get('hp_cls_' + name);
-  if (cached) { i = 0; setCurrent(cached.data, cached.at, false); }
-  else { cur = null; render(); }
-  notice('Đang đọc số mới của ' + name + '…');
+  const cached = store.get('hp_cls_' + name), fresh = !!cached && !cached.dirty && Date.now() - cached.at < FRESH_MS;
+  if (cached) { i = 0; setCurrent(cached.data, cached.at, fresh); }
+  else { cur = null; render(); notice('Đang đọc ' + name + ' lần đầu…'); }
+  if (!fresh || force) await refreshClass(name, seq);
+}
+async function refreshClass(name, seq) {
   try {
-    const data = await readClass(name);
-    if (seq !== loadSeq) return;
-    const at = Date.now();
+    const data = await readClass(name), at = Date.now();
     store.set('hp_cls_' + name, { data, at });
+    if (seq !== loadSeq) return;
     setCurrent(data, at, true);
-    notice('');
+    if (/^Đang đọc|^Chưa đọc được số mới/.test(noticeText)) notice('');
   } catch (e) {
     if (seq === loadSeq) { notice('Chưa đọc được số mới: ' + e.message + '. File có thể đang bận, bấm ↻ để thử lại.', true); render(); }
   }
 }
-async function loadAll() {
+/** Reads many classes in one request per group, so 35 classes take a few requests rather than 35. */
+async function readGroup(names, kho) {
+  try {
+    const parts = await batchGet(names.reduce((a, n) => a.concat(L.classRanges(n)), []));
+    names.forEach((name, k) => {
+      try { store.set('hp_cls_' + name, { data: buildFrom(name, parts.slice(k * 4, k * 4 + 4), kho), at: Date.now() }); }
+      catch (e) { console.error(name, e.message); }
+    });
+  } catch (e) {
+    if (/đăng nhập/.test(e.message)) throw e;
+    // One bad tab fails the whole request, so read this group one class at a time.
+    for (const name of names) {
+      try { store.set('hp_cls_' + name, { data: await readClass(name), at: Date.now() }); }
+      catch (e2) { if (/đăng nhập/.test(e2.message)) throw e2; console.error(name, e2.message); }
+    }
+  }
+}
+const homeBusy = () => document.activeElement && document.activeElement.classList.contains('search');
+/** auto: only what is missing or old, classes due for collection first. */
+async function loadAll(auto) {
   if (loadingAll) return;
-  loadingAll = true; loadedCount = 0; render();
+  const rank = n => { const x = cal && cal.list.find(c => c.tab === n); return x && /den|qua/.test(x.group) ? 0 : x && x.group === 'sap' ? 1 : 2; };
+  const old = n => { const c = store.get('hp_cls_' + n); return !c || c.dirty || Date.now() - c.at > 1800000; };
+  const names = (auto ? classes.filter(old) : classes.slice()).sort((a, b) => rank(a) - rank(b));
+  if (!names.length) return;
+  loadingAll = true; loadedCount = 0; loadTotal = names.length; if (!homeBusy()) render();
   try {
     const kho = await readKho();
-    for (const name of classes) {
-      try { store.set('hp_cls_' + name, { data: await readClass(name, kho), at: Date.now() }); }
-      catch (e) { if (/đăng nhập/.test(e.message)) throw e; console.error(name, e.message); }
-      loadedCount++;
-      if (view === 'home') render();
+    for (let k = 0; k < names.length; k += GROUP) {
+      const part = names.slice(k, k + GROUP);
+      await readGroup(part, kho);
+      loadedCount += part.length;
+      if (view === 'home' && !homeBusy()) render();
     }
     store.set('hp_all_at', Date.now());
   } catch (e) { notice('Chưa đọc xong các lớp: ' + e.message, true); }
-  loadingAll = false; if (view === 'home') render();
+  loadingAll = false; if (view === 'home' && !homeBusy()) render();
 }
 
 /* ---------- Paid ticks: saved in the browser first, then one batch per class ---------- */
 const QKEY = 'hp_pending', FINAL_ERROR = /đổi học sinh|không còn trong live|chưa dùng sổ mới|không khớp|Không thấy cột/;
-let pending = store.get(QKEY) || [], flushing = false, flushTimer = null;
+let pending = store.get(QKEY) || [], flushing = false, flushTimer = null, refreshTimer = null;
+/** A saved tick shows in the class's saved copy straight away; dirty means the next open still checks the Sheet. */
+function patchCache(p) {
+  const c = store.get('hp_cls_' + p.tab);
+  if (!c) return;
+  const it = String(c.data.dot) === String(p.dot) ? c.data.items.find(x => x.key === p.item.key) : null;
+  if (it) { it.paid = p.kind === 'paid'; it.status = it.paid ? 'Đã nộp' : 'Chưa nộp'; it.date = it.paid ? p.date : ''; if (it.paid && !it.tienSheet) it.tienSheet = p.item.amount || 0; }
+  c.dirty = true;
+  store.set('hp_cls_' + p.tab, c);
+}
 function savePending() { store.set(QKEY, pending); renderNotices(); }
 function applyPendingToView() {
   if (!cur) return;
@@ -150,11 +195,19 @@ async function flush() {
       });
       if (data.length) await batchWrite(data);
       const done = new Set(ok);
+      ok.forEach(patchCache);
       pending = pending.filter(p => !done.has(p));
     } catch (e) { group.forEach(p => { p.error = e.message; }); }
   }
   flushing = false; savePending();
-  if (cur && !pending.some(p => p.tab === cur.tab)) openClass(cur.tab);
+  if (cur && groups[cur.tab] && !pending.some(p => p.tab === cur.tab)) {
+    cur.items.forEach(x => { x.dangLuu = false; });
+    if (view === 'class') render();
+    // The tick already shows, so check it against the Sheet later and without blocking anything.
+    const name = cur.tab;
+    clearTimeout(refreshTimer);
+    refreshTimer = setTimeout(() => { if (view === 'class' && cur && cur.tab === name && !pending.length) refreshClass(name, ++loadSeq); }, 45000);
+  }
   if (pending.some(p => !FINAL_ERROR.test(p.error || ''))) { clearTimeout(flushTimer); flushTimer = setTimeout(flush, 60000); }
 }
 
@@ -277,10 +330,105 @@ function st(s, err) { const n = $('st'); if (n) { n.textContent = s; n.style.col
 function render() {
   const box = $('view'); box.replaceChildren();
   $('reload').setAttribute('aria-label', view === 'home' ? 'Tải lại tất cả các lớp' : 'Tải lại số mới của lớp');
-  if (view === 'home') renderHome(box); else if (view === 'moves') renderMoves(box); else renderClass(box);
+  if (view === 'home') renderHome(box); else if (view === 'moves') renderMoves(box); else if (view === 'cal') renderCal(box); else renderClass(box);
   const n = moves ? moves.list.filter(m => !m.wait).length + moves.due.length : 0;
   $('btnMoves').textContent = n ? 'Biến động (' + n + ')' : 'Biến động';
+  const dueNow = cal ? cal.list.filter(x => x.group === 'den' || x.group === 'qua').length : 0;
+  $('btnCal').textContent = dueNow ? 'Lịch thu (' + dueNow + ')' : 'Lịch thu';
   renderNotices();
+}
+
+/* ---------- Collection calendar: from TỔNG HỢP, checked against the Schedule ---------- */
+let cal = store.get('hp_cal'), calLoading = false, sched = store.get('hp_sched'), schedLoading = false;
+async function loadCal(force) {
+  if (calLoading || (!force && cal && Date.now() - cal.at < 600000)) return;
+  calLoading = true; if (view === 'cal') render();
+  try {
+    const [rows, holidays] = await batchGet(["'TỔNG HỢP'!A3:K60", "'NGHI_LE'!A2:A207"]);
+    cal = { list: L.calendar(rows), holidays: holidays.map(r => r[0]), at: Date.now() };
+    store.set('hp_cal', cal);
+  } catch (e) { notice('Chưa đọc được lịch thu: ' + e.message, true); }
+  calLoading = false; if (view === 'cal' || (view === 'home' && !homeBusy())) render();
+}
+async function loadSchedule(force) {
+  if (schedLoading || !cal || (!force && sched && !sched.error && Date.now() - sched.at < 1800000)) return;
+  schedLoading = true; if (view === 'cal') render();
+  try {
+    const tabs = cal.list.map(x => x.tab);
+    const lessonRows = await batchGet(tabs.map(t => L.quote(t) + '!AK20:AK39')), lessons = {};
+    tabs.forEach((t, k) => { lessons[t] = lessonRows[k].map(r => L.dayOf(r[0])).filter(n => !isNaN(n)); });
+    const first = Math.min(...tabs.map(t => lessons[t].length ? Math.min(...lessons[t]) : Infinity));
+    const meta = await api(SCHEDULE_API + '?fields=sheets.properties.title');
+    const weeks = meta.sheets.map(s => s.properties.title).map(title => {
+      const m = title.match(/^(\d{2}\.\d{2}\.\d{4}) - (\d{2}\.\d{2}\.\d{4})$/);
+      return m ? { title, from: L.dayOf(m[1]), to: L.dayOf(m[2]) } : null;
+    }).filter(w => w && w.to >= first);
+    const byClass = {};
+    for (let k = 0; k < weeks.length; k += 5) {
+      const part = weeks.slice(k, k + 5);
+      const got = await batchGetAt(SCHEDULE_API, part.reduce((a, w) => a.concat(['A56:G58', 'A56:A320', 'D56:D320', 'M56:M320'].map(r => L.quote(w.title) + '!' + r)), []));
+      part.forEach((w, n) => {
+        const [toggles, a, d, m] = got.slice(n * 4, n * 4 + 4);
+        L.weekSessions(a, d, m, toggles).filter(s => s.day >= w.from && s.day <= w.to).forEach(s => { (byClass[s.cls] = byClass[s.cls] || []).push(s); });
+      });
+    }
+    const gaps = {};
+    tabs.forEach(t => { const g = L.scheduleGaps(lessons[t], byClass[L.classKey(t)], weeks); if (g.length) gaps[t] = g; });
+    sched = { gaps, years: L.holidayGaps(cal.holidays, lessons), weeks: weeks.length, last: weeks.length ? Math.max(...weeks.map(w => w.to)) : 0, at: Date.now() };
+    store.set('hp_sched', sched);
+  } catch (e) {
+    sched = { error: /permission|caller does not have/i.test(e.message) ? 'Tài khoản này chưa có quyền xem file Schedule.' : 'Chưa đọc được Schedule: ' + e.message };
+  }
+  schedLoading = false; if (view === 'cal') render();
+}
+function openCal() { view = 'cal'; $('lop').value = ''; notice(''); render(); loadCal().then(() => loadSchedule()); }
+function dueText(x) {
+  const d = L.dayOf(x.due) - L.dayNow(new Date());
+  return x.due + (d === 0 ? ' (hôm nay)' : d > 0 ? ' (còn ' + d + ' ngày)' : ' (đã qua ' + -d + ' ngày)');
+}
+const GAP_TEXT = {
+  nghi: 'Schedule nghỉ, nhưng file học phí vẫn tính là một buổi',
+  thieu: 'file học phí tính một buổi, nhưng Schedule không có lớp này',
+  them: 'Schedule có học, nhưng file học phí không tính buổi này'
+};
+function calRow(x) {
+  const c = store.get('hp_cls_' + x.tab), s = c && String(c.data.dot) === x.dot ? summarize(c.data) : null, gaps = (sched && sched.gaps && sched.gaps[x.tab]) || [];
+  const chipClass = x.group === 'den' || x.group === 'qua' ? 'chip' : x.group === 'sap' ? 'chip warn-soft' : 'chip idle';
+  const prev = Number(x.dot) - 1, kids = [
+    el('div', { class: 'top' }, [el('b', { textContent: x.tab }), el('span', { class: chipClass, textContent: x.state })]),
+    el('div', { class: 'cal-line' }, ['Thu đợt ' + x.dot + ', hạn ', el('strong', { textContent: dueText(x) })]),
+    el('div', { class: 'cal-line sub', textContent: (x.start && x.end ? 'Đợt ' + prev + ' học ' + x.start + ' đến ' + x.end : '') }),
+    el('div', { class: 'cal-line sub', textContent: L.fmt(x.total) + ' đ' + (x.book ? ' · ' + x.book : '') + (s ? ' · đã nộp ' + s.paid + '/' + s.total : '') })];
+  gaps.forEach(g => kids.push(el('div', { class: 'warn-line', textContent: L.dayText(g.day) + ': ' + GAP_TEXT[g.type] })));
+  return el('button', { class: 'class cal-row', onclick: () => { filter = 'can'; tab = 'thu'; openClass(x.tab); } }, kids);
+}
+function renderCal(box) {
+  box.append(el('div', { class: 'page-title' }, [
+    el('div', {}, [el('h1', { textContent: 'Lịch thu các lớp' }),
+      el('div', { class: 'sub', textContent: calLoading && !cal ? 'Đang đọc…' : cal ? 'Số lúc ' + new Date(cal.at).toLocaleString('vi-VN', { hour: '2-digit', minute: '2-digit', day: '2-digit', month: '2-digit' }) : '' })])]));
+  if (!cal) { box.append(el('div', { class: 'empty', textContent: calLoading ? 'Đang đọc, xin đợi…' : 'Chưa đọc được. Bấm ↻ để thử lại.' })); return; }
+  const lines = [];
+  if (schedLoading) lines.push(el('div', { class: 'notice', textContent: 'Đang đối chiếu với Schedule…' }));
+  if (sched && sched.error) lines.push(el('div', { class: 'notice warn', textContent: sched.error }));
+  else if (sched && sched.at) {
+    const n = Object.keys(sched.gaps).length, lastDay = sched.last ? L.dayText(sched.last) : '';
+    lines.push(el('div', { class: n ? 'notice warn' : 'notice', textContent: (n ? n + ' lớp có buổi lệch với Schedule, xem ở từng lớp bên dưới.' : 'Các buổi của đợt đang học khớp với Schedule.') + ' Schedule mới có tuần đến ' + lastDay + ', các buổi sau đó vẫn là dự kiến.' }));
+    Object.keys(sched.years).forEach(y => lines.push(el('div', { class: 'notice warn', textContent: 'Tab NGHI_LE chưa có ngày nghỉ năm ' + y + '. Nếu nghỉ Tết dương hoặc Tết âm, ngày cuối đợt và hạn thu của ' + sched.years[y].join(', ') + ' sẽ còn đổi.' })));
+  }
+  if (lines.length) box.append(el('div', { class: 'notices' }, lines));
+  [['den', 'Đến hạn thu'], ['qua', 'Đã qua ngày cuối đợt'], ['sap', 'Sắp thu'], ['chua', 'Chưa đến']].forEach(([id, title]) => {
+    const list = cal.list.filter(x => x.group === id);
+    if (list.length) box.append(el('h2', { class: 'section', textContent: title + ' (' + list.length + ')' }), el('div', { class: 'classes' }, list.map(calRow)));
+  });
+}
+function dueBanner() {
+  if (!cal) return '';
+  const now = cal.list.filter(x => x.group === 'den' || x.group === 'qua'), soon = cal.list.filter(x => x.group === 'sap');
+  if (!now.length && !soon.length) return '';
+  const names = list => list.map(x => x.tab).join(', ');
+  return el('button', { class: 'due-banner card', onclick: openCal }, [
+    now.length ? el('div', {}, [el('strong', { textContent: 'Đến hạn thu: ' }), names(now)]) : '',
+    soon.length ? el('div', {}, [el('strong', { textContent: 'Sắp thu: ' }), names(soon)]) : '']);
 }
 
 /* ---------- Student movements: new, transfer, leaving ---------- */
@@ -464,8 +612,9 @@ function renderHome(box) {
   box.append(
     el('div', { class: 'page-title' }, [
       el('div', {}, [el('h1', { textContent: 'Tổng quan các lớp' }),
-        el('div', { class: 'sub', textContent: loadingAll ? 'Đang đọc ' + loadedCount + ' / ' + classes.length + ' lớp…' : at ? 'Cập nhật lúc ' + new Date(at).toLocaleString('vi-VN', { hour: '2-digit', minute: '2-digit', day: '2-digit', month: '2-digit' }) : 'Chưa đọc đủ các lớp' })]),
-      el('button', { textContent: loadingAll ? 'Đang cập nhật…' : 'Cập nhật tất cả', disabled: loadingAll, onclick: loadAll })]),
+        el('div', { class: 'sub', textContent: loadingAll ? 'Đang cập nhật ' + loadedCount + ' / ' + loadTotal + ' lớp, vẫn bấm vào lớp được…' : at ? 'Cập nhật lúc ' + new Date(at).toLocaleString('vi-VN', { hour: '2-digit', minute: '2-digit', day: '2-digit', month: '2-digit' }) : 'Chưa đọc đủ các lớp' })]),
+      el('button', { textContent: loadingAll ? 'Đang cập nhật…' : 'Cập nhật tất cả', disabled: loadingAll, onclick: () => loadAll() })]),
+    dueBanner(),
     el('div', { class: 'stats' }, [stat(L.fmt(owe) + ' đ', 'Còn phải thu đợt này'), stat(String(left), 'Học sinh chưa nộp'), stat(String(flagged), 'Số tiền cần xem lại', flagged > 0)]));
   const q = el('input', { class: 'search', type: 'search', value: query, placeholder: 'Tìm lớp, ví dụ KIDS 31', 'aria-label': 'Tìm lớp',
     oninput: e => { query = e.target.value; const g = $('grid'); if (g) fillGrid(g, rows); } });
@@ -490,9 +639,11 @@ function fillGrid(grid, rows) {
 function renderClass(box) {
   if (!cur) { box.append(el('div', { class: 'empty', textContent: 'Đang tải lớp…' })); return; }
   const s = summarize(cur);
-  const meta = ['Đợt ' + cur.dot, cur.dueDate ? 'hạn thu ' + cur.dueDate : '', cur.dueState].filter(Boolean).join(' · ');
+  // The due date belongs to the next đợt once it differs from the one being collected.
+  const nextDot = cur.nextDot && String(cur.nextDot) !== String(cur.dot) ? 'đợt ' + cur.nextDot + ' ' : '';
+  const meta = ['Đang thu đợt ' + cur.dot, cur.dueDate ? nextDot + 'hạn thu ' + cur.dueDate : '', cur.dueState].filter(Boolean).join(' · ');
   const when = curFresh ? 'Số mới lúc ' + new Date(curAt).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' })
-    : 'Số lúc ' + new Date(curAt).toLocaleString('vi-VN', { hour: '2-digit', minute: '2-digit', day: '2-digit', month: '2-digit' }) + ', chưa đối chiếu xong. Đợi xong rồi mới gửi thiệp.';
+    : 'Số lúc ' + new Date(curAt).toLocaleString('vi-VN', { hour: '2-digit', minute: '2-digit', day: '2-digit', month: '2-digit' }) + ', đang lấy số mới. Vẫn tick được, còn gửi thiệp thì đợi số mới.';
   box.append(
     el('div', { class: 'class-head card' }, [
       el('div', { class: 'page-title', style: 'margin:0' }, [el('h1', { textContent: cur.tab }), el('span', { class: 'sub', textContent: meta })]),
@@ -514,7 +665,7 @@ function renderThu(box) {
   box.append(el('div', { class: 'fee-list' }, list.map(feeRow)));
 }
 function feeRow(it) {
-  const d = el('input', { type: 'date', value: localDate(), max: localDate(), 'aria-label': 'Ngày nộp của ' + it.name });
+  const d = el('input', { type: 'date', value: picked[it.key] || localDate(), max: localDate(), 'aria-label': 'Ngày nộp của ' + it.name, oninput: e => { picked[it.key] = e.target.value; } });
   const r2 = it.paid
     ? [el('span', { class: 'chip ok', textContent: 'Đã nộp ' + it.date + (it.dangLuu ? ' · đang lưu' : '') }), el('div', { class: 'fill' }), el('button', { class: 'quiet', textContent: 'Bỏ tick', onclick: () => boTick(it) })]
     : [el('span', { class: /chưa thu ngay/i.test(it.status) ? 'chip idle' : 'chip', textContent: it.status || 'Chưa nộp' }), el('div', { class: 'fill' }), d, el('button', { class: 'tick', textContent: 'Đã nộp', onclick: () => tick(it, d.value) })];
@@ -529,6 +680,7 @@ function tick(it, iso) {
   if (!iso) return notice('Hãy chọn ngày nộp.', true);
   if (!it.amount && !confirm(fullName(it) + ' chưa có số tiền đợt này. Vẫn tick đã nộp?')) return;
   const [y, m, d] = iso.split('-');
+  delete picked[it.key];
   queue({ kind: 'paid', tab: cur.tab, dot: cur.dot, date: d + '/' + m + '/' + y, item: { key: it.key, row: it.row, name: it.name, eng: it.eng, amount: it.amount } });
 }
 function boTick(it) {
@@ -615,13 +767,14 @@ async function ghiRieng(msg, amt) {
   $('edErr').textContent = 'Đang lưu…';
   try {
     const name = cur.tab, dot = cur.dot, want = L.freshRanges(name, [it.row]);
-    const [values, cells, kho] = await Promise.all([batchGet(want.values), batchGet(want.cells, 'FORMULA'), readKho()]);
+    const [values, cells, kho] = await Promise.all([batchGet(want.values), batchGet(want.cells, 'FORMULA'), readKho(true)]);
     const plan = L.planOverride(name, it, L.freshAt(values, cells, 0), dot, msg, amt, kho), data = plan.updates.slice();
     if (plan.store && plan.store.row > 0) data.push({ range: "'_TRO_LY_ZALO'!A" + plan.store.row + ':B' + plan.store.row, values: [[plan.store.key, plan.store.value]] });
     if (plan.store && plan.store.row < 0) data.push({ range: "'_TRO_LY_ZALO'!A" + (kho.length + 1) + ':B' + (kho.length + 1), values: [[plan.store.key, plan.store.value]] });
     if (data.length) await batchWrite(data);
     $('sua').close();
-    await openClass(name);
+    khoMemo = null;
+    await openClass(name, true);
     st('Đã lưu, thiệp đã cập nhật.');
   } catch (e) { $('edErr').textContent = 'Không lưu được: ' + e.message; }
 }
@@ -636,10 +789,13 @@ async function afterLogin() {
     // Rows with no tracker link (T1, TV2) have no class tab yet.
     const list = rows.filter(r => r[0] && r[4]).map(r => r[0]).sort((a, b) => a.localeCompare(b, 'vi', { numeric: true }));
     store.set('hp_classes', list); fillClasses(list);
-    if (view === 'home') { render(); if (!store.get('hp_all_at') || Date.now() - store.get('hp_all_at') > 1800000) loadAll(); }
+    if (view === 'home') render();
   } catch (e) { notice('Chưa đọc được danh sách lớp: ' + e.message, true); }
   if (pending.length) flush();
   loadMoves();
+  // Read the calendar first so classes due for collection are refreshed before the others.
+  await loadCal();
+  loadAll(true);
 }
 function fillClasses(list) {
   classes = list; const s = $('lop'), v = s.value;
@@ -650,8 +806,13 @@ window.addEventListener('load', () => {
   $('btnLogin').addEventListener('click', () => getToken(true).then(afterLogin).catch(e => { $('loginMsg').textContent = e.message; }));
   $('home').addEventListener('click', () => { view = 'home'; $('lop').value = ''; notice(''); render(); });
   $('lop').addEventListener('change', e => { if (e.target.value) { filter = 'can'; openClass(e.target.value); } });
-  $('reload').addEventListener('click', () => { if (view === 'home') loadAll(); else if (view === 'moves') loadMoves(); else if (cur) openClass(cur.tab); });
-  $('btnMoves').addEventListener('click', () => { view = 'moves'; $('lop').value = ''; notice(''); render(); loadMoves(); });
+  $('reload').addEventListener('click', () => {
+    if (view === 'home') loadAll(); else if (view === 'moves') loadMoves();
+    else if (view === 'cal') loadCal(true).then(() => loadSchedule(true));
+    else if (cur) openClass(cur.tab, true);
+  });
+  $('btnCal').addEventListener('click', openCal);
+  $('btnMoves').addEventListener('click', () => { view = 'moves'; $('lop').value = ''; notice(''); render(); if (!moves || Date.now() - moves.at > FRESH_MS) loadMoves(); });
   $('dvLuu').addEventListener('click', luuDuyet);
   $('dvKhongThu').addEventListener('click', khongThuMove);
   $('dvHuy').addEventListener('click', () => $('duyet').close());
@@ -660,7 +821,7 @@ window.addEventListener('load', () => {
   $('btnOut').addEventListener('click', () => {
     if (pending.length && !confirm('Còn ' + pending.length + ' lần tick chưa lưu sẽ bị bỏ. Vẫn đăng xuất?')) return;
     if (token) google.accounts.oauth2.revoke(token, () => {});
-    token = null; pending = [];
+    token = null; pending = []; cal = null; sched = null; khoMemo = null;
     try { sessionStorage.removeItem('hp_token'); } catch (e) { /* nothing to clear */ }
     Object.keys(localStorage).filter(k => k.startsWith('hp_')).forEach(k => store.del(k));
     showLogin(false);
