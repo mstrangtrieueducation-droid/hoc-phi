@@ -206,13 +206,15 @@ function patchCache(p) {
   const c = store.get('hp_cls_' + p.tab);
   if (!c) return;
   const it = String(c.data.dot) === String(p.dot) ? c.data.items.find(x => x.key === p.item.key) : null;
-  if (it) { it.paid = p.kind === 'paid'; it.status = it.paid ? 'Đã nộp' : 'Chưa nộp'; it.date = it.paid ? p.date : ''; if (it.paid && !it.tienSheet) it.tienSheet = p.item.amount || 0; }
+  if (it) { it.paid = p.kind === 'paid'; it.status = it.paid ? 'Đã nộp' : 'Chưa nộp'; it.date = it.paid ? p.date : ''; if (it.paid && (!it.tienSheet || it.stale)) { it.tienSheet = p.item.amount || 0; it.stale = false; } }
+  if (p.gopOf && String(c.data.dot) === String(p.gopOf)) { const x = c.data.items.find(y => y.key === p.item.key); if (x) L.dropGop(x); }
   c.dirty = true;
   store.set('hp_cls_' + p.tab, c);
 }
 function savePending() { store.set(QKEY, pending); renderNotices(); }
 function applyPendingToView() {
   if (!cur) return;
+  pending.filter(p => p.tab === cur.tab && p.gopOf === cur.dot).forEach(p => { const it = cur.items.find(x => x.key === p.item.key); if (it) L.dropGop(it); });
   pending.filter(p => p.tab === cur.tab && p.dot === cur.dot).forEach(p => {
     const it = cur.items.find(x => x.key === p.item.key); if (!it) return;
     it.paid = p.kind === 'paid'; it.status = p.kind === 'paid' ? 'Đã nộp' : 'Chưa nộp'; it.date = p.kind === 'paid' ? p.date : ''; it.dangLuu = true;
@@ -952,7 +954,7 @@ function sentPanel() {
 }
 
 function renderThu(box) {
-  const groups = { can: cur.items.filter(x => !x.paid), ghi: cur.items.filter(chuaGhi), da: cur.items.filter(x => x.paid), xem: cur.items.filter(x => !x.paid && (x.warn || x.trong)) };
+  const groups = { can: cur.items.filter(x => !x.paid), ghi: cur.items.filter(chuaGhi), da: cur.items.filter(x => x.paid), xem: cur.items.filter(x => !x.paid && (x.warn || x.trong || x.gop)) };
   const chip = (id, label) => el('button', { textContent: label + ' ' + groups[id].length, 'aria-pressed': String(filter === id), onclick: () => { filter = id; render(); } });
   box.append(el('div', { class: 'filters' }, [chip('can', 'Chưa thu'), chip('ghi', 'Chưa ghi'), chip('xem', 'Cần xem lại'), chip('da', 'Đã nộp')]));
   const list = groups[filter];
@@ -971,6 +973,7 @@ function feeRow(it) {
     it.paid ? '' : el('div', { class: 'r3' }, sent
       ? [el('span', { class: 'sent', textContent: sentText(sent) }), (sentIdx[cur.tab + '|' + cur.dot] || {})[it.key] ? el('button', { class: 'quiet', textContent: 'Bỏ đánh dấu', onclick: () => markStudent(it, false) }) : '']
       : [el('button', { class: 'act', textContent: 'Đánh dấu đã gửi Zalo', onclick: () => markStudent(it, true) })]),
+    it.gop && !it.paid ? el('div', { class: 'warn-line' }, ['Đã gộp đợt ' + it.gop.dot + ': ' + money(it.gop.amount) + (it.gop.blank ? ' vì đợt đó chưa ghi nộp hay chưa.' : ' vì đợt đó chưa nộp.'), el('button', { class: 'quiet', textContent: 'Đợt ' + it.gop.dot + ' đã nộp', onclick: () => tickGop(it, d.value) })]) : '',
     it.warn ? el('div', { class: 'warn-line' }, [it.warn, el('button', { class: 'quiet', textContent: 'Xem và sửa', onclick: () => moSua(it) })]) : '',
     !it.warn && it.trong ? el('div', { class: 'warn-line' }, ['Chưa có tin hoặc số tiền đợt này.', el('button', { class: 'quiet', textContent: 'Nhập', onclick: () => moSua(it) })]) : '']);
 }
@@ -980,7 +983,14 @@ function tick(it, iso) {
   if (!it.amount && !confirm(fullName(it) + ' chưa có số tiền đợt này. Vẫn tick đã nộp?')) return;
   const [y, m, d] = iso.split('-');
   delete picked[it.key];
-  queue({ kind: 'paid', tab: cur.tab, dot: cur.dot, date: d + '/' + m + '/' + y, item: { key: it.key, row: it.row, name: it.name, eng: it.eng, amount: it.amount } });
+  queue({ kind: 'paid', tab: cur.tab, dot: cur.dot, date: d + '/' + m + '/' + y, item: { key: it.key, row: it.row, name: it.name, eng: it.eng, amount: it.amount, stale: it.stale, tienSheet: it.tienSheet } });
+}
+/** The previous đợt was paid after all: tick that đợt, and the formula takes it back out of this one. */
+function tickGop(it, iso) {
+  if (!iso) return notice('Hãy chọn ngày nộp.', true);
+  const g = it.gop, [y, m, d] = iso.split('-'), date = d + '/' + m + '/' + y;
+  if (!confirm('Ghi ' + fullName(it) + ' đã nộp đợt ' + g.dot + ' ngày ' + date + '?\nSố cần thu đợt ' + cur.dot + ' sẽ còn ' + money(it.amount - g.amount) + '.')) return;
+  queue({ kind: 'paid', tab: cur.tab, dot: g.dot, gopOf: cur.dot, date, item: { key: it.key, row: it.row, name: it.name, eng: it.eng, amount: g.amount } });
 }
 function boTick(it) {
   if (!confirm('Bỏ tick đã nộp của ' + fullName(it) + '? Ngày nộp sẽ bị xoá.')) return;
@@ -995,7 +1005,7 @@ function renderZalo(box) {
   const pick = k => { i = k; step = 0; render(); };
   const people = el('div', { class: 'people card', role: 'list' }, items.map((x, k) => el('button', { 'data-key': x.key, 'aria-current': String(k === i), onclick: () => pick(k) }, [
     el('span', { class: 'n', textContent: (k + 1) + '. ' + fullName(x) }),
-    x.trong ? el('span', { class: 'm none', textContent: 'chưa có tin' }) : x.warn && !sentTo(x) ? el('span', { class: 'm warn', textContent: 'xem lại' }) : sentTo(x) ? el('span', { class: 'm done', textContent: 'đã gửi' }) : chuaGhi(x) ? el('span', { class: 'm none', textContent: 'chưa ghi' }) : ''])));
+    x.trong ? el('span', { class: 'm none', textContent: 'chưa có tin' }) : (x.warn || x.gop) && !sentTo(x) ? el('span', { class: 'm warn', textContent: x.gop ? 'gộp đợt ' + x.gop.dot : 'xem lại' }) : sentTo(x) ? el('span', { class: 'm done', textContent: 'đã gửi' }) : chuaGhi(x) ? el('span', { class: 'm none', textContent: 'chưa ghi' }) : ''])));
   const sel = el('select', { id: 'chon', 'aria-label': 'Chọn học sinh', onchange: e => pick(+e.target.value) },
     items.map((x, k) => el('option', { value: String(k), textContent: (k + 1) + '. ' + fullName(x) + (x.trong ? ' – chưa có tin' : sentTo(x) ? ' – đã gửi' : x.warn ? ' – xem lại' : '') })));
   sel.value = String(i);
@@ -1005,6 +1015,7 @@ function renderZalo(box) {
     sel,
     el('div', { class: 'who' }, [el('b', { textContent: fullName(it) }), it.rieng ? el('span', { class: 'tag', textContent: 'đã sửa riêng' }) : '', el('button', { class: 'quiet', textContent: 'Sửa riêng', onclick: () => moSua(it) })]),
     it.warn ? el('div', { class: 'warn-line', style: 'margin:0 0 8px' }, [it.warn]) : '',
+    it.gop ? el('div', { class: 'warn-line', style: 'margin:0 0 8px' }, ['Tin này gộp cả đợt ' + it.gop.dot + ' (' + money(it.gop.amount) + ')' + (it.gop.blank ? ' vì đợt đó chưa ghi nộp hay chưa. Xem sao kê trước khi gửi' : '') + '. Đã nộp rồi thì bấm "Đợt ' + it.gop.dot + ' đã nộp" ở tab Thu tiền, số sẽ tự trừ.']) : '',
     chuaGhi(it) ? el('div', { class: 'warn-line', style: 'margin:0 0 8px' }, ['Em này chưa ghi nộp hay chưa. Xem sao kê trước khi gửi, đã nộp thì tick ở tab Thu tiền.']) : '',
     el('div', { class: 'r3' }, mine
       ? [el('span', { class: 'sent', textContent: sentText(mine) }), own ? el('button', { class: 'quiet', textContent: 'Bỏ đánh dấu', onclick: () => markStudent(it, false) }) : '']

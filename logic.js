@@ -19,6 +19,12 @@
   const a1 = (tab, col, row) => quote(tab) + '!' + colA1(col) + row;
   const liveFormula = (row, expr) => '=IF($EC' + row + '="' + ACTIVE + '";' + expr + ';"")';
   const totalIn = s => digits((String(s).match(/Tổng số tiền cần thanh toán là:\s*([\d.,]+)/i) || [])[1] || '');
+  // The line the class's message formula (BP40) adds when the previous đợt rolls into this one.
+  const GOP_LINE = /\n- Con [^\n]*còn học phí Đợt \d+ chưa thanh toán:[^\n]*/;
+  function gopIn(s) {
+    const m = String(s).match(/còn học phí Đợt (\d+) chưa thanh toán: ([\d.]+) đồng/);
+    return m ? { dot: m[1], amount: digits(m[2]) } : null;
+  }
 
   /** Ranges to read for one class, in the order buildClass expects them. */
   function classRanges(tab) {
@@ -55,7 +61,7 @@
       }
     }
 
-    const statusCol = findPeriodCol(track, nameRow, dot); // 1-based
+    const statusCol = findPeriodCol(track, nameRow, dot), prevCol = findPeriodCol(track, nameRow, Number(dot) - 1); // 1-based
     const rows = [];
     for (let k = 0; k < COUNT; k++) {
       const r = track[nameRow + 1 + k] || [], name = cell([r], 0, nameCol), eng = cell([r], 0, nameCol + 1);
@@ -66,12 +72,14 @@
       const status = statusCol > 0 ? String(cell([r], 0, statusCol - 1)) : '';
       const tienSheet = statusCol > 0 ? digits(cell([r], 0, statusCol)) : 0;
       const date = statusCol > 0 ? String(cell([r], 0, statusCol + 1)) : '';
-      const tienAuto = totalIn(auto);
+      const tienAuto = totalIn(auto), filled = kho[['TUDIEN', tab, 'D' + dot, name, eng].join('|')];
+      // A cell the daily job filled, whose auto total has moved since (say the previous đợt was ticked). The job rewrites it at 06:00; until then the message is right.
+      const stale = filled !== undefined && tienSheet > 0 && tienAuto > 0 && digits(filled) === tienSheet && tienSheet !== tienAuto;
       let soTien = String(sua.amt || '').replace(/\D/g, '');
       if (sua.msg || sua.amt) { if (!sua.daGhi && tienSheet > 0) soTien = ''; }
       if (soTien && tienSheet > 0 && tienSheet !== Number(soTien)) soTien = String(tienSheet);
-      if (!soTien && tienSheet > 0 && tienSheet !== tienAuto) soTien = String(tienSheet);
-      rows.push({ row, name, eng, key, auto, manual: String(sua.msg || '').trim(), soTien, tienSheet, tienAuto, status, date,
+      if (!soTien && tienSheet > 0 && tienSheet !== tienAuto && !stale) soTien = String(tienSheet);
+      rows.push({ stale, prevStatus: prevCol > 0 ? String(cell([r], 0, prevCol - 1)).trim() : '', row, name, eng, key, auto, manual: String(sua.msg || '').trim(), soTien, tienSheet, tienAuto, status, date,
         paid: isPaid(status), tuSheet: !!soTien && soTien !== String(sua.amt || ''), hadOverride: !!(sua.msg || sua.amt),
         link: (auto.match(/https:\/\/img\.vietqr\.io\/\S+/) || [''])[0], goc: sua.goc });
     }
@@ -85,6 +93,9 @@
       const base = { row: x.row, name: x.name, eng: x.eng, key: x.key, paid: x.paid, status: x.status, date: x.date,
         tienSheet: x.tienSheet, tienAuto: x.tienAuto, goc: x.goc, hadOverride: x.hadOverride };
       if (!msgOut) return Object.assign(base, { trong: true, msg: '', qr: '', rieng: false, manual: '', soTien: '', auto: '', nhap: boQr(nhap), amount: x.tienSheet, warn: '' });
+      // A typed amount wins over the merged one, so the message must not still claim the merge.
+      const g = !x.manual && (!x.soTien || Number(x.soTien) === x.tienAuto) ? gopIn(x.auto) : null;
+      if (!x.manual && !g) msgOut = msgOut.replace(GOP_LINE, '');
       let qr = x.link;
       if (!qr && mau) qr = mau.replace(/addInfo=[^&]*/, 'addInfo=' + encodeURIComponent(
         decodeURIComponent((mau.match(/addInfo=([^&]*)/) || ['', ''])[1]).replace(/\S+$/, x.eng || x.name)));
@@ -93,10 +104,11 @@
       else if (x.manual) tien = String(totalIn(x.manual) || '');
       if (tien && qr) qr = qr.replace(/amount=\d+/, 'amount=' + tien);
       // Flags cases like a late joiner whose message deducts sessions while the table still holds the full fee.
-      const warn = !x.manual && !x.paid && x.tienAuto > 0 && x.tienSheet > 0 && x.tienSheet !== x.tienAuto
+      const warn = !x.manual && !x.paid && !x.stale && x.tienAuto > 0 && x.tienSheet > 0 && x.tienSheet !== x.tienAuto
         ? 'Số trong bảng (' + fmt(x.tienSheet) + ' đ) khác số tự tính trong tin (' + fmt(x.tienAuto) + ' đ). Thiệp đang theo số trong bảng.' : '';
       return Object.assign(base, { msg: boQr(msgOut), qr, rieng: !!(x.manual || (x.soTien && !x.tuSheet)), manual: x.manual ? boQr(x.manual) : '',
-        soTien: x.soTien, auto: boQr(x.auto), amount: Number(tien) || x.tienSheet || x.tienAuto, warn });
+        soTien: x.soTien, auto: boQr(x.auto), amount: Number(tien) || (x.stale ? x.tienAuto : x.tienSheet || x.tienAuto), warn, stale: x.stale,
+        gop: g ? { dot: g.dot, amount: g.amount, blank: !x.prevStatus } : null });
     });
     const label = name => { let out = ''; top.forEach(r => (r || []).forEach((v, c) => { if (v === name && !out) out = String(r[c + 1] || ''); })); return out; };
     const book = n => { const v = label('Tên sách/tài liệu ' + n).trim(); return v === '0' ? '' : v; };
@@ -104,6 +116,16 @@
       prevEnd: label('Ngày kết thúc đợt ngay trước đợt đã qua'), start: label('Ngày đầu đợt đã qua'), end: label('Ngày kết thúc đợt đã qua'), sessions: label('Số buổi đợt mới'), fee: label('Học phí đợt mới'),
       bookTotal: label('Tổng tiền sách/tài liệu'), total: label('Tổng cần thu'), books: [1, 2, 3, 4, 5].map(book),
       lessons: (raw.lessons || []).map(r => dayOf((r || [])[0])).filter(n => !isNaN(n)), history: pastDots(hist, headRow) };
+  }
+
+  /** What the message formula will say once the previous đợt counts as paid, so a tick shows at once instead of after the recalculation. */
+  function dropGop(it) {
+    if (!it.gop) return;
+    const own = it.amount - it.gop.amount, total = /(Tổng số tiền cần thanh toán là:\s*)[\d.,]+/i;
+    it.msg = it.msg.replace(GOP_LINE, '').replace(total, '$1' + fmt(own));
+    it.auto = String(it.auto || '').replace(GOP_LINE, '').replace(total, '$1' + fmt(own));
+    it.qr = String(it.qr || '').replace(/amount=\d+/, 'amount=' + own);
+    it.amount = it.tienAuto = own; it.stale = it.tienSheet > 0 && it.tienSheet !== own; it.gop = null;
   }
 
   /** Collections already recorded in J:T, newest first. The first row under the header is the live formula for the coming đợt, so it is left out. */
@@ -163,9 +185,12 @@
     const p = periodCells(tab, it, fresh, dot), up = [];
     up.push({ range: p.lA1(0), values: [['Đã nộp']] }, { range: p.lA1(2), values: [[dateText]] });
     const amt = Number(amount) || 0;
-    if (p.lg(1) === '' && amt > 0) up.push({ range: p.lA1(1), values: [[amt]] });
+    // A stale auto-filled cell gets the right amount before the paid status locks it; a cell changed by hand since then is left alone.
+    const inCell = isLet(p.vis(1)) ? digits(p.lg(1)) : isLiveWrap(p.vis(1), it.row) ? digits((String(p.vis(1)).match(/;(\d+);/) || [])[1] || '') : digits(p.vis(1));
+    const fix = !!it.stale && amt > 0 && inCell === Number(it.tienSheet);
+    if ((p.lg(1) === '' || fix) && amt > 0) up.push({ range: p.lA1(1), values: [[amt]] });
     if (!isLet(p.vis(0))) up.push({ range: p.vA1(0), values: [[liveFormula(it.row, '"Đã nộp"')]] });
-    if (!isLet(p.vis(1)) && p.vis(1) === '' && amt > 0) up.push({ range: p.vA1(1), values: [[liveFormula(it.row, amt)]] });
+    if (!isLet(p.vis(1)) && (p.vis(1) === '' || fix) && amt > 0) up.push({ range: p.vA1(1), values: [[liveFormula(it.row, amt)]] });
     if (!isLet(p.vis(2))) up.push({ range: p.vA1(2), values: [[dateText]] });
     return up;
   }
@@ -425,5 +450,5 @@
     return (students || []).filter(x => !(marks && marks[x.key]));
   }
 
-  return { notMarked, dayOf, dayText, dayNow, calendar, classKey, weekSessions, scheduleGaps, scheduleLessons, weekdays, ackKey, sentIndex, leaveStatus, classifyMoves, moveInputs, qrFromMessage, intakeDue, EXIT_ACCOUNT, NEW_TAB, EXIT_TAB, buildClass, classRanges, freshRanges, freshAt, planPaid, planUnpaid, planOverride, findPeriodCol, colA1, quote, fmt, digits, clean, isPaid, todayText, ACTIVE };
+  return { notMarked, dayOf, dayText, dayNow, calendar, classKey, weekSessions, scheduleGaps, scheduleLessons, weekdays, ackKey, sentIndex, leaveStatus, classifyMoves, moveInputs, qrFromMessage, intakeDue, EXIT_ACCOUNT, NEW_TAB, EXIT_TAB, buildClass, dropGop, classRanges, freshRanges, freshAt, planPaid, planUnpaid, planOverride, findPeriodCol, colA1, quote, fmt, digits, clean, isPaid, todayText, ACTIVE };
 });
