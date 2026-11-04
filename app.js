@@ -41,24 +41,39 @@ function openStore() {
 }
 
 /* ---------- Sign-in ---------- */
-let token = null, tokenUntil = 0, tokenClient = null, tokenWaiters = [];
+let token = null, tokenUntil = 0, tokenClient = null, tokenWaiters = [], renewing = false, sessionLost = false;
+const RENEW_BEFORE = 15 * 60000;
 function initAuth() {
   tokenClient = google.accounts.oauth2.initTokenClient({
     client_id: CONFIG.clientId, scope: 'https://www.googleapis.com/auth/spreadsheets email',
     callback: r => {
-      const w = tokenWaiters; tokenWaiters = [];
+      const w = tokenWaiters; tokenWaiters = []; renewing = false;
       if (r.error) return w.forEach(x => x.fail(new Error('Chưa đăng nhập được: ' + r.error)));
       token = r.access_token; tokenUntil = Date.now() + (Number(r.expires_in) - 60) * 1000;
       try { sessionStorage.setItem('hp_token', JSON.stringify({ token, tokenUntil })); } catch (e) { /* sign in again after a reload */ }
       w.forEach(x => x.ok(token));
+      if (sessionLost) { sessionLost = false; notice(''); if (pending.length) flush(); flushSent(); }
     },
-    error_callback: e => { const w = tokenWaiters; tokenWaiters = []; w.forEach(x => x.fail(new Error('Chưa đăng nhập được: ' + (e.type || 'lỗi')))); }
+    error_callback: e => { const w = tokenWaiters; tokenWaiters = []; renewing = false; w.forEach(x => x.fail(new Error('Chưa đăng nhập được: ' + (e.type || 'lỗi')))); }
   });
 }
 function getToken(interactive) {
   if (token && Date.now() < tokenUntil) return Promise.resolve(token);
   if (!interactive) { showLogin(true); return Promise.reject(new Error('Cần đăng nhập lại.')); }
-  return new Promise((ok, fail) => { tokenWaiters.push({ ok, fail }); tokenClient.requestAccessToken({ prompt: '' }); });
+  return new Promise((ok, fail) => { tokenWaiters.push({ ok, fail }); askToken(); });
+}
+// The remembered address spares the account chooser when several Google accounts are signed in.
+function askToken() { const hint = store.get('hp_email'); tokenClient.requestAccessToken(hint ? { prompt: '', login_hint: hint } : { prompt: '' }); }
+/**
+ * Google's token lasts one hour and this page has no server to extend it. A click may open Google's popup, which closes
+ * itself, so a person at work is renewed before the hour is up and never lands on the sign-in page.
+ */
+function renewOnClick(e) {
+  const left = tokenUntil - Date.now(), on = e.target && e.target.closest ? e.target : document.body;
+  if (!tokenClient || renewing || $('app').hidden || left > RENEW_BEFORE || on.closest('#btnOut')) return;
+  // Copying a card needs this page to keep focus, so that click leaves it to the next one unless time is already up.
+  if (left > 0 && on.closest('#one, #thiepCopy, .copy')) return;
+  renewing = true; askToken();
 }
 async function api(path, options, attempts) {
   const t = await getToken(false);
@@ -358,7 +373,16 @@ function renderNotices() {
   }
   if (sentErr) box.append(el('div', { class: 'notice warn', role: 'status', textContent: sentErr }));
 }
-function showLogin(again) { $('login').hidden = false; $('app').hidden = true; $('loginMsg').textContent = again ? 'Phiên đăng nhập đã hết, bấm để đăng nhập lại.' : ''; }
+function showLogin(again) {
+  // Mid-work the page stays up: the next click renews the sign-in, and unsaved ticks wait in their queue.
+  if (again && !$('app').hidden) {
+    token = null; tokenUntil = 0; sessionLost = true;
+    return notice('Phiên Google vừa hết giờ. Bấm vào bất cứ chỗ nào để nối lại, các dấu tick chưa lưu vẫn được giữ.', true);
+  }
+  const hint = store.get('hp_email');
+  $('btnLogin').textContent = hint ? 'Tiếp tục với ' + hint : 'Đăng nhập Google';
+  $('login').hidden = false; $('app').hidden = true; $('loginMsg').textContent = again ? 'Phiên đăng nhập đã hết, bấm để đăng nhập lại.' : '';
+}
 function st(s, err) { const n = $('st'); if (n) { n.textContent = s; n.style.color = err ? 'var(--bad)' : 'var(--ok)'; } }
 function render() {
   const box = $('view'); box.replaceChildren();
@@ -380,7 +404,7 @@ function restoreSent() { sentQueue = store.get('hp_sentq') || []; sentRows = (st
 async function loadWho() {
   try {
     const r = await fetch('https://www.googleapis.com/oauth2/v3/userinfo', { headers: { Authorization: 'Bearer ' + token } });
-    if (r.ok) { const u = await r.json(); if (u.email) who = personName(u.email); }
+    if (r.ok) { const u = await r.json(); if (u.email) { who = personName(u.email); store.set('hp_email', u.email); } }
   } catch (e) { /* marks are still saved, only without a name */ }
 }
 async function loadSent(force) {
@@ -989,7 +1013,7 @@ function renderZalo(box) {
     it.qr ? el('div', { class: 'pv' }, [img]) : '',
     el('div', { class: 'nav', style: 'margin-top:8px' }, [
       el('button', { textContent: '← Em trước', disabled: i === 0, onclick: () => go(-1) }),
-      el('button', { textContent: 'Copy lại', disabled: !it.qr, onclick: copyCard }),
+      el('button', { class: 'copy', textContent: 'Copy lại', disabled: !it.qr, onclick: copyCard }),
       el('button', { textContent: 'Em sau →', disabled: i === items.length - 1, onclick: () => go(1) })]),
     el('div', { id: 'st', class: 'st', role: 'status' }),
     el('div', { class: 'count', textContent: 'Em ' + (i + 1) + ' / ' + items.length + ' · đã gửi ' + done + ' / ' + items.length })])]));
@@ -1114,11 +1138,13 @@ window.addEventListener('load', () => {
     pending = store.get(QKEY) || []; cal = store.get('hp_cal'); sched = store.get('hp_sched'); restoreSent();
     const wait = setInterval(() => { if (window.google && google.accounts) {
       clearInterval(wait); initAuth(); $('btnLogin').disabled = false;
+      showLogin(false);
       try {
         const kept = JSON.parse(sessionStorage.getItem('hp_token'));
         if (kept && Date.now() < kept.tokenUntil) { token = kept.token; tokenUntil = kept.tokenUntil; afterLogin(); }
       } catch (e) { /* the sign-in button is still there */ }
     } }, 100);
   });
+  document.addEventListener('click', renewOnClick, true);
   window.addEventListener('beforeunload', e => { if (pending.length) e.preventDefault(); });
 });
