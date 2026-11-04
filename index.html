@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="robots" content="noindex">
 <meta name="theme-color" content="#0b5394">
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' https://accounts.google.com; connect-src https://sheets.googleapis.com https://img.vietqr.io https://oauth2.googleapis.com https://accounts.google.com; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline' https://accounts.google.com https://fonts.googleapis.com; font-src https://fonts.gstatic.com; frame-src https://accounts.google.com">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' https://accounts.google.com; connect-src https://sheets.googleapis.com https://www.googleapis.com https://img.vietqr.io https://oauth2.googleapis.com https://accounts.google.com; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline' https://accounts.google.com https://fonts.googleapis.com; font-src https://fonts.gstatic.com; frame-src https://accounts.google.com">
 <title>Học phí</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -91,7 +91,7 @@
   .class-head h1 { font-size: 20px; font-weight: 700; }
   .class-head .nums { display: flex; flex-wrap: wrap; gap: 4px 20px; margin-top: 2px; font-size: 14px; color: var(--muted); }
   .class-head .nums strong { color: var(--ink); font-weight: 600; }
-  .seg { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; padding: 4px; margin-bottom: 12px; border-radius: 12px; background: var(--soft); }
+  .seg { display: grid; grid-template-columns: repeat(3, 1fr); gap: 4px; padding: 4px; margin-bottom: 12px; border-radius: 12px; background: var(--soft); }
   .seg button { border: 0; background: none; color: var(--muted); }
   .seg button[aria-pressed="true"] { background: var(--card); color: var(--ink); font-weight: 600; box-shadow: var(--shadow); }
   .filters { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; }
@@ -164,6 +164,22 @@
   .cal-line:empty { display: none; }
   .cal-line strong { font-weight: 600; }
   .chip.warn-soft { background: var(--brand-soft); color: var(--brand); }
+  .sent { color: var(--ok); font-size: 13px; font-weight: 500; }
+  .cal-line.sent { margin-top: 2px; }
+  .row .r3, .stage .r3 { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; margin-top: 4px; min-height: 28px; font-size: 13px; }
+  .r3 .quiet { min-height: 32px; padding: 2px 6px; font-size: 13px; }
+  .ack { display: flex; align-items: center; gap: 8px; margin-top: 10px; font-size: 14px; font-weight: 500; cursor: pointer; }
+  .ack input { width: 20px; height: 20px; flex: none; accent-color: var(--ok); }
+  .panel { padding: 14px 16px; margin-bottom: 12px; }
+  .panel-title { font-size: 16px; font-weight: 700; margin-bottom: 4px; }
+  .lessons { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 2px 16px; margin: 10px 0 8px; padding-left: 28px; font-size: 14px; }
+  .lessons .past { color: var(--muted); }
+  .lessons .gap { color: var(--warn); font-weight: 500; }
+  .panel .books select { background: var(--card); }
+  .hist { padding: 8px 0; border-top: 1px solid var(--line); font-size: 14px; }
+  .hist summary { cursor: pointer; font-weight: 500; }
+  .detail { margin: 6px 0 0; font: inherit; font-size: 13px; color: var(--muted); white-space: pre-wrap; }
+  .log { margin: 6px 0 0; padding-left: 18px; font-size: 13px; color: var(--muted); max-height: 240px; overflow-y: auto; }
   @media (max-width: 640px) {
     .bar { flex-wrap: wrap; }
     #btnCal, #btnMoves { flex: 1; }

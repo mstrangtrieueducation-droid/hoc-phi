@@ -2,6 +2,7 @@
 const CONFIG = window.HP_CONFIG;
 const SHEET_API = 'https://sheets.googleapis.com/v4/spreadsheets/' + CONFIG.sheetId;
 const SCHEDULE_API = 'https://sheets.googleapis.com/v4/spreadsheets/' + CONFIG.scheduleId;
+const LOG_API = 'https://sheets.googleapis.com/v4/spreadsheets/' + CONFIG.logId;
 const L = window.HpLogic;
 const $ = id => document.getElementById(id);
 // Saved data lives in IndexedDB: localStorage is shared with every other page on this github.io address, and those pages fill its 5 MB.
@@ -43,7 +44,7 @@ function openStore() {
 let token = null, tokenUntil = 0, tokenClient = null, tokenWaiters = [];
 function initAuth() {
   tokenClient = google.accounts.oauth2.initTokenClient({
-    client_id: CONFIG.clientId, scope: 'https://www.googleapis.com/auth/spreadsheets',
+    client_id: CONFIG.clientId, scope: 'https://www.googleapis.com/auth/spreadsheets email',
     callback: r => {
       const w = tokenWaiters; tokenWaiters = [];
       if (r.error) return w.forEach(x => x.fail(new Error('Chưa đăng nhập được: ' + r.error)));
@@ -88,8 +89,6 @@ let noticeText = '', noticeErr = false;
 const zaloItems = () => cur ? cur.items.filter(x => !x.paid) : [];
 const fullName = x => x.name + (x.eng ? ' (' + x.eng + ')' : '');
 const money = n => n ? L.fmt(n) + ' đ' : '';
-const sentKey = () => 'hp_sent_' + cur.tab + '_' + cur.dot;
-const sentSet = () => new Set(store.get(sentKey()) || []);
 
 function summarize(data) {
   const paid = data.items.filter(x => x.paid), due = data.items.filter(x => !x.paid);
@@ -107,7 +106,8 @@ async function readKho(force) {
   return rows;
 }
 function khoMap(rows) { const map = {}; rows.forEach(r => { if (r[0]) map[r[0]] = r[1]; }); return map; }
-const buildFrom = (name, parts, rows) => L.buildClass(name, { top: parts[0], hist: parts[1], track: parts[2], msg: parts[3], kho: khoMap(rows) });
+const buildFrom = (name, parts, rows) => L.buildClass(name, { top: parts[0], hist: parts[1], track: parts[2], msg: parts[3], lessons: parts[4], kho: khoMap(rows) });
+const RANGES_PER_CLASS = L.classRanges('').length;
 async function readClass(name) {
   const [parts, rows] = await Promise.all([batchGet(L.classRanges(name)), readKho()]);
   return buildFrom(name, parts, rows);
@@ -125,7 +125,7 @@ async function openClass(name, force) {
   const seq = ++loadSeq;
   view = 'class'; step = 0;
   store.set('hp_last_class', name); $('lop').value = name;
-  const cached = store.get('hp_cls_' + name), fresh = !!cached && !cached.dirty && Date.now() - cached.at < FRESH_MS;
+  const cached = store.get('hp_cls_' + name), fresh = !!cached && !cached.dirty && !!cached.data.history && Date.now() - cached.at < FRESH_MS;
   if (cached) { i = 0; setCurrent(cached.data, cached.at, fresh); }
   else { cur = null; render(); notice('Đang đọc ' + name + ' lần đầu…'); }
   if (!fresh || force) await refreshClass(name, seq);
@@ -146,7 +146,7 @@ async function readGroup(names, kho) {
   try {
     const parts = await batchGet(names.reduce((a, n) => a.concat(L.classRanges(n)), []));
     names.forEach((name, k) => {
-      try { store.set('hp_cls_' + name, { data: buildFrom(name, parts.slice(k * 4, k * 4 + 4), kho), at: Date.now() }); }
+      try { store.set('hp_cls_' + name, { data: buildFrom(name, parts.slice(k * RANGES_PER_CLASS, (k + 1) * RANGES_PER_CLASS), kho), at: Date.now() }); }
       catch (e) { console.error(name, e.message); }
     });
   } catch (e) {
@@ -163,7 +163,7 @@ const homeBusy = () => document.activeElement && document.activeElement.classLis
 async function loadAll(auto) {
   if (loadingAll) return;
   const rank = n => { const x = cal && cal.list.find(c => c.tab === n); return x && /den|qua/.test(x.group) ? 0 : x && x.group === 'sap' ? 1 : 2; };
-  const old = n => { const c = store.get('hp_cls_' + n); return !c || c.dirty || Date.now() - c.at > 1800000; };
+  const old = n => { const c = store.get('hp_cls_' + n); return !c || c.dirty || !c.data.history || Date.now() - c.at > 1800000; };
   const names = (auto ? classes.filter(old) : classes.slice()).sort((a, b) => rank(a) - rank(b));
   if (!names.length) return;
   loadingAll = true; loadedCount = 0; loadTotal = names.length; if (!homeBusy()) render();
@@ -353,6 +353,7 @@ function renderNotices() {
     box.append(el('div', { class: stuck.length ? 'notice err' : 'notice warn', role: 'status',
       textContent: (flushing ? 'Đang lưu ' : 'Chờ lưu ') + pending.length + ' lần tick. Đừng đóng trang.' + (stuck.length ? ' Lỗi: ' + stuck[0].error : '') }));
   }
+  if (sentErr) box.append(el('div', { class: 'notice warn', role: 'status', textContent: sentErr }));
 }
 function showLogin(again) { $('login').hidden = false; $('app').hidden = true; $('loginMsg').textContent = again ? 'Phiên đăng nhập đã hết, bấm để đăng nhập lại.' : ''; }
 function st(s, err) { const n = $('st'); if (n) { n.textContent = s; n.style.color = err ? 'var(--bad)' : 'var(--ok)'; } }
@@ -367,14 +368,89 @@ function render() {
   renderNotices();
 }
 
+/* ---------- Who sent what on Zalo: a separate small file, so a tick never makes the tuition file recalculate ---------- */
+let who = '', sentRows = [], sentIdx = {}, sentQueue = [], sentAt = 0, sentBusy = false, sentErr = '', ackMap = {};
+const personName = mail => (/^mstrang/.test(mail) ? 'Cô Trang' : /^im\.son/.test(mail) ? 'Sơn' : String(mail).split('@')[0]);
+const sentOf = (tabName, dot, key) => { const c = sentIdx[tabName + '|' + dot]; return c ? c[key] || c['*'] || null : null; };
+const sentText = s => 'Đã gửi ' + s.at + (s.by ? ' · ' + s.by : '');
+function restoreSent() { sentQueue = store.get('hp_sentq') || []; sentRows = (store.get('hp_sentlog') || []).concat(sentQueue); sentIdx = L.sentIndex(sentRows); ackMap = store.get('hp_ack') || {}; }
+async function loadWho() {
+  try {
+    const r = await fetch('https://www.googleapis.com/oauth2/v3/userinfo', { headers: { Authorization: 'Bearer ' + token } });
+    if (r.ok) { const u = await r.json(); if (u.email) who = personName(u.email); }
+  } catch (e) { /* marks are still saved, only without a name */ }
+}
+async function loadSent(force) {
+  if (!force && Date.now() - sentAt < 60000) return;
+  try {
+    const [rows] = await batchGetAt(LOG_API, ['NhatKy!A2:H20000']);
+    store.set('hp_sentlog', rows);
+    sentRows = rows.concat(sentQueue); sentIdx = L.sentIndex(sentRows); sentAt = Date.now(); sentErr = '';
+    if (view === 'cal' || (view === 'class' && tab !== 'zalo')) render();
+  } catch (e) { sentErr = /permission|caller does not have/i.test(e.message) ? 'Tài khoản này chưa được chia sẻ file Nhật ký gửi Zalo, nên chưa lưu được ai đã gửi.' : 'Chưa đọc được nhật ký gửi: ' + e.message; renderNotices(); }
+}
+async function loadAck() {
+  try {
+    const [rows] = await batchGet(["'XÁC NHẬN ĐÃ GỬI'!A4:G800"]), map = {};
+    rows.forEach(r => { if (r[6]) map[r[6]] = (r[6] in map ? map[r[6]] : true) && /^true$/i.test(String(r[3])); });
+    ackMap = map; store.set('hp_ack', map);
+  } catch (e) { console.error(e.message); }
+}
+function nowShort() { const d = new Date(), p = n => ('0' + n).slice(-2); return p(d.getDate()) + '/' + p(d.getMonth() + 1) + ' ' + p(d.getHours()) + ':' + p(d.getMinutes()); }
+function logSent(tabName, dot, list, action) {
+  const at = nowShort(), rows = list.map(x => [at, tabName, String(dot), x.name, x.eng || '', x.key, action, who]);
+  sentRows = sentRows.concat(rows); sentIdx = L.sentIndex(sentRows);
+  sentQueue = sentQueue.concat(rows); store.set('hp_sentq', sentQueue);
+  flushSent();
+}
+async function flushSent() {
+  if (sentBusy || !sentQueue.length) return;
+  sentBusy = true;
+  const batch = sentQueue.slice();
+  try {
+    await api(LOG_API + '/values/NhatKy!A:H:append?valueInputOption=RAW&insertDataOption=INSERT_ROWS', { method: 'POST', body: JSON.stringify({ values: batch }) }, 2);
+    sentQueue = sentQueue.slice(batch.length); store.set('hp_sentq', sentQueue); sentErr = '';
+    sentBusy = false; if (sentQueue.length) flushSent();
+  } catch (e) {
+    sentBusy = false;
+    sentErr = (/permission|caller does not have/i.test(e.message) ? 'Tài khoản này chưa được chia sẻ file Nhật ký gửi Zalo. ' : 'Mạng hoặc file đang bận. ') + 'Dấu đã gửi đang giữ trên máy này và sẽ tự lưu lại.';
+    setTimeout(flushSent, 30000);
+  }
+  renderNotices();
+}
+function markStudent(it, on) {
+  if (!cur) return;
+  logSent(cur.tab, cur.dot, [it], on ? 'da-gui' : 'bo');
+  render();
+}
+/** Whole-class tick: also the box the reminder email reads in XÁC NHẬN ĐÃ GỬI, so the email stops asking about this đợt. */
+async function markClass(tabName, dot, due, on) {
+  const key = L.ackKey(tabName, dot), sheet = "'XÁC NHẬN ĐÃ GỬI'!";
+  ackMap[key] = on; store.set('hp_ack', ackMap);
+  logSent(tabName, dot, [{ name: '(cả lớp)', eng: '', key: '*' }], on ? 'da-gui' : 'bo');
+  render();
+  try {
+    const [rows] = await batchGet([sheet + 'A4:G800']), hits = [];
+    rows.forEach((r, k) => { if (r[6] === key) hits.push(k + 4); });
+    const row = rows.length + 4;
+    const data = hits.length ? hits.map(n => ({ range: sheet + 'D' + n, values: [[on]] }))
+      : on ? [{ range: sheet + 'A' + row + ':G' + row, values: [[tabName, Number(dot), due || '', on, '=IF(D' + row + ';"Đã gửi — dừng nhắc thông báo";"Chưa xác nhận đã gửi")', '', key]] }] : [];
+    if (data.length) await batchWrite(data);
+  } catch (e) {
+    ackMap[key] = !on; store.set('hp_ack', ackMap);
+    logSent(tabName, dot, [{ name: '(cả lớp)', eng: '', key: '*' }], on ? 'bo' : 'da-gui');
+    notice('Chưa lưu được dấu cả lớp: ' + e.message, true); render();
+  }
+}
+
 /* ---------- Collection calendar: from TỔNG HỢP, checked against the Schedule ---------- */
 let cal = store.get('hp_cal'), calLoading = false, sched = store.get('hp_sched'), schedLoading = false;
 async function loadCal(force) {
   if (calLoading || (!force && cal && Date.now() - cal.at < 600000)) return;
   calLoading = true; if (view === 'cal') render();
   try {
-    const [rows, holidays] = await batchGet(["'TỔNG HỢP'!A3:K60", "'NGHI_LE'!A2:A207"]);
-    cal = { list: L.calendar(rows), holidays: holidays.map(r => r[0]), at: Date.now() };
+    const [rows, synced] = await batchGet(["'TỔNG HỢP'!A3:K60", "'NGHI_LE'!I8"]);
+    cal = { list: L.calendar(rows), synced: String(((synced || [])[0] || [])[0] || ''), at: Date.now() };
     store.set('hp_cal', cal);
   } catch (e) { notice('Chưa đọc được lịch thu: ' + e.message, true); }
   calLoading = false; if (view === 'cal' || (view === 'home' && !homeBusy())) render();
@@ -402,15 +478,17 @@ async function loadSchedule(force) {
         L.weekSessions(a, d, m, toggles).filter(s => s.day >= w.from && s.day <= w.to).forEach(s => { (byClass[s.cls] = byClass[s.cls] || []).push(s); });
       });
     }
-    const gaps = {}, days = {};
+    const gaps = {}, days = {}, offs = {};
     tabs.forEach(t => {
+      const first = lessons[t].length ? Math.min(...lessons[t]) : Infinity;
+      offs[t] = (byClass[L.classKey(t)] || []).filter(s => s.off && s.day >= first).map(s => s.day).sort((a, b) => a - b);
       const g = L.scheduleGaps(lessons[t], byClass[L.classKey(t)], weeks);
       if (!g.length) return;
       gaps[t] = g;
       const from = Math.min(...lessons[t]), to = Math.max(...weeks.map(w => w.to));
       days[t] = { file: L.weekdays(lessons[t]), schedule: L.weekdays((byClass[L.classKey(t)] || []).filter(s => !s.off && s.day >= from && s.day <= to).map(s => s.day)) };
     });
-    sched = { gaps, days, years: L.holidayGaps(cal.holidays, lessons), weeks: weeks.length, last: weeks.length ? Math.max(...weeks.map(w => w.to)) : 0, at: Date.now() };
+    sched = { gaps, days, offs, weeks: weeks.length, last: weeks.length ? Math.max(...weeks.map(w => w.to)) : 0, at: Date.now() };
     store.set('hp_sched', sched);
   } catch (e) {
     sched = { error: /permission|caller does not have/i.test(e.message) ? 'Tài khoản này chưa có quyền xem file Schedule.' : 'Chưa đọc được Schedule: ' + e.message };
@@ -423,7 +501,7 @@ function dueText(x) {
   return x.due + (d === 0 ? ' (hôm nay)' : d > 0 ? ' (còn ' + d + ' ngày)' : ' (đã qua ' + -d + ' ngày)');
 }
 const GAP_TEXT = {
-  nghi: 'Schedule nghỉ, nhưng file học phí vẫn tính là một buổi',
+  nghi: 'Schedule nghỉ. Sáng mai file học phí tự dời buổi này',
   thieu: 'file học phí tính một buổi, nhưng Schedule không có lớp này',
   them: 'Schedule có học, nhưng file học phí không tính buổi này'
 };
@@ -438,6 +516,10 @@ function calRow(x) {
     el('div', { class: 'cal-line' }, ['Thu đợt ' + x.dot + ', hạn ', el('strong', { textContent: dueText(x) })]),
     el('div', { class: 'cal-line sub', textContent: (x.start && x.end ? 'Đợt ' + prev + ' học ' + x.start + ' đến ' + x.end : '') }),
     el('div', { class: 'cal-line sub', textContent: L.fmt(x.total) + ' đ' + (x.book ? ' · ' + x.book : '') + (s ? ' · đã nộp ' + s.paid + '/' + s.total : '') })];
+  const unpaid = c && String(c.data.dot) === x.dot ? c.data.items.filter(y => !y.paid) : [];
+  const gone = unpaid.filter(y => sentOf(x.tab, x.dot, y.key)).length;
+  if (ackMap[L.ackKey(x.tab, x.dot)]) kids.push(el('div', { class: 'cal-line sent', textContent: 'Đã gửi tin cho lớp' }));
+  else if (gone) kids.push(el('div', { class: 'cal-line sent', textContent: 'Đã gửi ' + gone + '/' + unpaid.length + ' em chưa nộp' }));
   // Many differences mean the class's weekdays are wrong rather than single sessions.
   const days = sched && sched.days && sched.days[x.tab];
   if (DOI_DOT_SAU[x.tab] === x.dot && days) kids.push(el('div', { class: 'cal-line sub', textContent: 'Đợt đang học giữ nguyên ngày. Từ đợt tới học ' + days.schedule + ' theo Schedule.' }));
@@ -455,9 +537,9 @@ function renderCal(box) {
   if (sched && sched.error) lines.push(el('div', { class: 'notice warn', textContent: sched.error }));
   else if (sched && sched.at) {
     const n = cal.list.filter(x => gapsToShow(x).length).length, lastDay = sched.last ? L.dayText(sched.last) : '';
-    lines.push(el('div', { class: n ? 'notice warn' : 'notice', textContent: (n ? n + ' lớp có buổi lệch với Schedule, xem ở từng lớp bên dưới.' : 'Các buổi của đợt đang học khớp với Schedule.') + ' Schedule mới có tuần đến ' + lastDay + ', các buổi sau đó vẫn là dự kiến.' }));
-    Object.keys(sched.years).forEach(y => lines.push(el('div', { class: 'notice warn', textContent: 'Tab NGHI_LE chưa có ngày nghỉ năm ' + y + '. Nếu nghỉ Tết dương hoặc Tết âm, ngày cuối đợt và hạn thu của ' + sched.years[y].join(', ') + ' sẽ còn đổi.' })));
+    lines.push(el('div', { class: n ? 'notice warn' : 'notice', textContent: (n ? n + ' lớp có buổi lệch với Schedule, xem ở từng lớp bên dưới.' : 'Các buổi của đợt đang học khớp với Schedule.') + ' Schedule mới có tuần đến ' + lastDay + ', các buổi sau đó vẫn là dự kiến nên hạn thu có thể còn đổi.' }));
   }
+  if (cal.synced) lines.push(el('div', { class: /LỖI|đầy/.test(cal.synced) ? 'notice warn' : 'notice', textContent: 'Ngày nghỉ lấy từ Schedule mỗi sáng. Lần đọc cuối ' + cal.synced }));
   if (lines.length) box.append(el('div', { class: 'notices' }, lines));
   [['den', 'Đến hạn thu'], ['qua', 'Đã qua ngày cuối đợt'], ['sap', 'Sắp thu'], ['chua', 'Chưa đến']].forEach(([id, title]) => {
     const list = cal.list.filter(x => x.group === id);
@@ -692,11 +774,86 @@ function renderClass(box) {
       el('div', { class: 'page-title', style: 'margin:0' }, [el('h1', { textContent: cur.tab }), el('span', { class: 'sub', textContent: meta })]),
       el('div', { class: 'track', role: 'img', 'aria-label': 'Đã nộp ' + s.paid + ' trên ' + s.total }, [el('i', { style: 'width:' + (s.total ? Math.round(s.paid / s.total * 100) : 0) + '%' })]),
       el('div', { class: 'nums' }, [el('span', {}, ['Đã nộp ', el('strong', { textContent: s.paid + '/' + s.total })]), el('span', {}, ['Đã thu ', el('strong', { textContent: money(s.got) || '0 đ' })]), el('span', {}, ['Còn phải thu ', el('strong', { textContent: money(s.owe) || '0 đ' })])]),
-      el('div', { class: curFresh ? 'sub' : 'hint', style: 'margin-top:6px', textContent: when })]),
+      el('div', { class: curFresh ? 'sub' : 'hint', style: 'margin-top:6px', textContent: when }),
+      classTick()]),
     el('div', { class: 'seg' }, [
       el('button', { textContent: 'Thu tiền', 'aria-pressed': String(tab === 'thu'), onclick: () => { tab = 'thu'; render(); } }),
-      el('button', { textContent: 'Gửi Zalo', 'aria-pressed': String(tab === 'zalo'), onclick: () => { tab = 'zalo'; render(); } })]));
-  if (tab === 'zalo') renderZalo(box); else renderThu(box);
+      el('button', { textContent: 'Gửi Zalo', 'aria-pressed': String(tab === 'zalo'), onclick: () => { tab = 'zalo'; render(); loadSent(); } }),
+      el('button', { textContent: 'Đợt học', 'aria-pressed': String(tab === 'dot'), onclick: () => { tab = 'dot'; render(); loadBooks(); loadCal().then(() => loadSchedule()); } })]));
+  if (tab === 'zalo') renderZalo(box); else if (tab === 'dot') renderDot(box); else renderThu(box);
+}
+function classTick() {
+  const name = cur.tab, dot = cur.dot, key = L.ackKey(name, dot), mark = (sentIdx[name + '|' + dot] || {})['*'];
+  // The due date on the class page belongs to B3, so it only goes with this đợt when they are the same.
+  const due = String(cur.nextDot) === String(dot) ? cur.dueDate : '';
+  return el('label', { class: 'ack' }, [
+    el('input', { type: 'checkbox', checked: !!ackMap[key], onchange: e => markClass(name, dot, due, e.target.checked) }),
+    'Đã gửi tin cho cả lớp đợt ' + dot + (ackMap[key] && mark ? ' (' + mark.at + (mark.by ? ', ' + mark.by : '') + ')' : '')]);
+}
+
+/* ---------- Đợt học: lessons, books, history ---------- */
+let bookList = null, bookDraft = null;
+async function loadBooks() {
+  if (bookList) return;
+  try {
+    const [rows] = await batchGet(["'DANH_MUC_SACH'!A4:B80"]);
+    bookList = rows.filter(r => r[0] && !/^Không thu/.test(r[0])).map(r => ({ name: String(r[0]), price: L.digits(r[1]) }));
+    if (view === 'class' && tab === 'dot') render();
+  } catch (e) { notice('Chưa đọc được danh mục sách: ' + e.message, true); }
+}
+function renderDot(box) {
+  if (!cur.history) { box.append(el('div', { class: 'empty', textContent: 'Đang lấy chi tiết đợt, bấm ↻ nếu chưa thấy.' })); return; }
+  const today = L.dayNow(new Date()), lessons = cur.lessons, learned = lessons.filter(d => d <= today).length, off = (sched && sched.offs && sched.offs[cur.tab]) || [];
+  const gapDays = {}; ((sched && sched.gaps && sched.gaps[cur.tab]) || []).forEach(g => { gapDays[g.day] = g.type; });
+  const learning = Number(cur.nextDot) - 1;
+  box.append(el('div', { class: 'card panel' }, [
+    el('h2', { class: 'panel-title', textContent: 'Đợt ' + learning + ' đang học' }),
+    el('div', { class: 'sub', textContent: (cur.start && cur.end ? cur.start + ' đến ' + cur.end + ' · ' : '') + 'đã học ' + learned + '/' + lessons.length + ' buổi' + (lessons.length ? ' · ' + L.weekdays(lessons) : '') }),
+    el('div', { class: 'sub', textContent: 'Thu đợt ' + cur.nextDot + ': hạn ' + cur.dueDate + (cur.dueState ? ' · ' + cur.dueState : '') }),
+    el('ol', { class: 'lessons' }, lessons.map(d => el('li', { class: (d <= today ? 'past' : '') + (gapDays[d] ? ' gap' : ''), textContent: L.dayText(d).slice(0, 5) + ' ' + L.weekdays([d]) + (gapDays[d] === 'nghi' ? ' (Schedule nghỉ)' : '') }))),
+    off.length ? el('div', { class: 'sub', textContent: 'Schedule ghi nghỉ: ' + off.map(d => L.dayText(d).slice(0, 5)).join(', ') }) : '']));
+  box.append(bookPanel(), historyPanel(), sentPanel());
+}
+function bookPanel() {
+  const draft = bookDraft && bookDraft.tab === cur.tab ? bookDraft.list : cur.books.slice();
+  const price = name => { const b = (bookList || []).find(x => x.name === name); return b ? b.price : 0; };
+  const sum = draft.reduce((a, n) => a + price(n), 0), fee = L.digits(cur.fee), changed = draft.join('|') !== cur.books.join('|');
+  const pickers = draft.map((value, k) => el('select', { 'aria-label': 'Sách ' + (k + 1), onchange: e => { const list = draft.slice(); list[k] = e.target.value; bookDraft = { tab: cur.tab, list }; render(); } },
+    [el('option', { value: '', textContent: k === 0 ? 'Không thu sách' : '(trống)' })].concat(
+      // A value typed in the Sheet that is no longer in the catalogue stays selectable, so saving cannot lose it.
+      (bookList || []).concat(value && !(bookList || []).some(b => b.name === value) ? [{ name: value, price: 0 }] : []).map(b => el('option', { value: b.name, textContent: b.name + (b.price ? ' · ' + L.fmt(b.price) + ' đ' : ''), selected: b.name === value })))));
+  return el('div', { class: 'card panel' }, [
+    el('h2', { class: 'panel-title', textContent: 'Sách thu cùng đợt ' + cur.nextDot }),
+    bookList ? el('div', { class: 'books' }, pickers) : el('div', { class: 'sub', textContent: 'Đang đọc danh mục sách…' }),
+    el('div', { class: 'sub', style: 'margin-top:8px', textContent: 'Học phí ' + L.fmt(fee) + ' đ + sách ' + L.fmt(sum) + ' đ = ' + L.fmt(fee + sum) + ' đ' }),
+    el('div', { class: 'acts' }, [
+      el('button', { class: 'primary', id: 'bookSave', textContent: 'Lưu sách', disabled: !changed, onclick: () => luuSach(draft) }),
+      changed ? el('button', { textContent: 'Huỷ', onclick: () => { bookDraft = null; render(); } }) : '']),
+    el('div', { class: 'sub', style: 'margin-top:6px', textContent: 'Em đã nộp không đổi. Em chưa nộp tự cập nhật số tiền sáng hôm sau, trừ ô đã sửa tay.' })]);
+}
+async function luuSach(list) {
+  const name = cur.tab, btn = $('bookSave');
+  if (btn) { btn.disabled = true; btn.textContent = 'Đang lưu…'; }
+  try {
+    await batchWrite([{ range: L.quote(name) + '!B7:B11', values: list.map(v => [v]) }]);
+    bookDraft = null;
+    notice('Đã lưu sách của ' + name + '. File đang tính lại, số mới sẽ hiện sau ít phút.');
+    await openClass(name, true);
+    notice('Đã lưu sách của ' + name + '.');
+  } catch (e) { notice('Chưa lưu được sách: ' + e.message, true); render(); }
+}
+function historyPanel() {
+  return el('div', { class: 'card panel' }, [el('h2', { class: 'panel-title', textContent: 'Các đợt đã thu' })].concat(
+    cur.history.length ? cur.history.map(h => el('details', { class: 'hist' }, [
+      el('summary', {}, ['Thu đợt ' + h.dot + (h.paidOn ? ', ngày ' + h.paidOn : '') + ' · ' + h.total + ' đ']),
+      el('div', { class: 'sub', textContent: 'Đợt ' + (Number(h.dot) - 1) + ' học ' + h.from + ' đến ' + h.to + ' · học phí ' + h.fee + ' đ' + (h.book ? ' · ' + h.book : '') }),
+      h.detail ? el('pre', { class: 'detail', textContent: h.detail }) : ''])) : [el('div', { class: 'sub', textContent: 'Chưa có đợt nào được ghi.' })]));
+}
+function sentPanel() {
+  const rows = sentRows.filter(r => r[1] === cur.tab && String(r[2]) === String(cur.dot)).slice().reverse();
+  return el('div', { class: 'card panel' }, [el('h2', { class: 'panel-title', textContent: 'Lịch sử gửi Zalo đợt ' + cur.dot }),
+    rows.length ? el('ul', { class: 'log' }, rows.map(r => el('li', { textContent: r[0] + ' · ' + (r[7] || 'chưa rõ người') + ': ' + (r[6] === 'bo' ? 'bỏ đánh dấu ' : 'đã gửi ') + r[3] + (r[4] ? ' (' + r[4] + ')' : '') })))
+      : el('div', { class: 'sub', textContent: 'Chưa ai đánh dấu đã gửi.' })]);
 }
 
 function renderThu(box) {
@@ -712,9 +869,13 @@ function feeRow(it) {
   const r2 = it.paid
     ? [el('span', { class: 'chip ok', textContent: 'Đã nộp ' + it.date + (it.dangLuu ? ' · đang lưu' : '') }), el('div', { class: 'fill' }), el('button', { class: 'quiet', textContent: 'Bỏ tick', onclick: () => boTick(it) })]
     : [el('span', { class: /chưa thu ngay/i.test(it.status) ? 'chip idle' : 'chip', textContent: it.status || 'Chưa nộp' }), el('div', { class: 'fill' }), d, el('button', { class: 'tick', textContent: 'Đã nộp', onclick: () => tick(it, d.value) })];
+  const sent = !it.paid && sentOf(cur.tab, cur.dot, it.key);
   return el('div', { class: 'row card' }, [
     el('div', { class: 'r1' }, [el('span', { class: 'nm', textContent: fullName(it) }), el('span', { class: 'amt', textContent: money(it.amount) || 'Chưa có số' })]),
     el('div', { class: 'r2' }, r2),
+    it.paid ? '' : el('div', { class: 'r3' }, sent
+      ? [el('span', { class: 'sent', textContent: sentText(sent) }), (sentIdx[cur.tab + '|' + cur.dot] || {})[it.key] ? el('button', { class: 'quiet', textContent: 'Bỏ đánh dấu', onclick: () => markStudent(it, false) }) : '']
+      : [el('button', { class: 'quiet', textContent: 'Đánh dấu đã gửi Zalo', onclick: () => markStudent(it, true) })]),
     it.warn ? el('div', { class: 'warn-line' }, [it.warn, el('button', { class: 'quiet', textContent: 'Xem và sửa', onclick: () => moSua(it) })]) : '',
     !it.warn && it.trong ? el('div', { class: 'warn-line' }, ['Chưa có tin hoặc số tiền đợt này.', el('button', { class: 'quiet', textContent: 'Nhập', onclick: () => moSua(it) })]) : '']);
 }
@@ -735,20 +896,23 @@ function renderZalo(box) {
   const items = zaloItems();
   if (!items.length) { box.append(el('div', { class: 'empty', textContent: 'Lớp này đã nộp đủ đợt ' + cur.dot + ', không cần nhắc nữa.' })); return; }
   i = Math.min(i, items.length - 1);
-  const it = items[i], sent = sentSet();
+  const it = items[i], sentTo = x => sentOf(cur.tab, cur.dot, x.key), mine = sentTo(it), own = (sentIdx[cur.tab + '|' + cur.dot] || {})[it.key];
   const pick = k => { i = k; step = 0; render(); };
   const people = el('div', { class: 'people card', role: 'list' }, items.map((x, k) => el('button', { 'data-key': x.key, 'aria-current': String(k === i), onclick: () => pick(k) }, [
     el('span', { class: 'n', textContent: (k + 1) + '. ' + fullName(x) }),
-    x.trong ? el('span', { class: 'm none', textContent: 'chưa có tin' }) : x.warn ? el('span', { class: 'm warn', textContent: 'xem lại' }) : sent.has(x.key) ? el('span', { class: 'm done', textContent: 'đã copy' }) : ''])));
+    x.trong ? el('span', { class: 'm none', textContent: 'chưa có tin' }) : x.warn && !sentTo(x) ? el('span', { class: 'm warn', textContent: 'xem lại' }) : sentTo(x) ? el('span', { class: 'm done', textContent: 'đã gửi' }) : ''])));
   const sel = el('select', { id: 'chon', 'aria-label': 'Chọn học sinh', onchange: e => pick(+e.target.value) },
-    items.map((x, k) => el('option', { value: String(k), textContent: (k + 1) + '. ' + fullName(x) + (x.trong ? ' – chưa có tin' : x.warn ? ' – xem lại' : sent.has(x.key) ? ' – đã copy' : '') })));
+    items.map((x, k) => el('option', { value: String(k), textContent: (k + 1) + '. ' + fullName(x) + (x.trong ? ' – chưa có tin' : sentTo(x) ? ' – đã gửi' : x.warn ? ' – xem lại' : '') })));
   sel.value = String(i);
   const img = el('img', { id: 'card', alt: 'Thiệp học phí của ' + it.name });
-  const done = items.filter(x => sent.has(x.key)).length;
+  const done = items.filter(sentTo).length;
   box.append(el('div', { class: 'zalo' }, [people, el('div', { class: 'stage' }, [
     sel,
     el('div', { class: 'who' }, [el('b', { textContent: fullName(it) }), it.rieng ? el('span', { class: 'tag', textContent: 'đã sửa riêng' }) : '', el('button', { class: 'quiet', textContent: 'Sửa riêng', onclick: () => moSua(it) })]),
     it.warn ? el('div', { class: 'warn-line', style: 'margin:0 0 8px' }, [it.warn]) : '',
+    el('div', { class: 'r3' }, mine
+      ? [el('span', { class: 'sent', textContent: sentText(mine) }), own ? el('button', { class: 'quiet', textContent: 'Bỏ đánh dấu', onclick: () => markStudent(it, false) }) : '']
+      : [el('button', { class: 'quiet', textContent: 'Đánh dấu đã gửi', onclick: () => markStudent(it, true) })]),
     el('button', { class: 'one primary', id: 'one', textContent: oneLabel(it), onclick: oneClick }),
     it.qr ? el('div', { class: 'pv' }, [img]) : '',
     el('div', { class: 'nav', style: 'margin-top:8px' }, [
@@ -756,30 +920,26 @@ function renderZalo(box) {
       el('button', { textContent: 'Copy lại', disabled: !it.qr, onclick: copyCard }),
       el('button', { textContent: 'Em sau →', disabled: i === items.length - 1, onclick: () => go(1) })]),
     el('div', { id: 'st', class: 'st', role: 'status' }),
-    el('div', { class: 'count', textContent: 'Em ' + (i + 1) + ' / ' + items.length + ' · đã copy ' + done + ' thiệp trên máy này' })])]));
+    el('div', { class: 'count', textContent: 'Em ' + (i + 1) + ' / ' + items.length + ' · đã gửi ' + done + ' / ' + items.length })])]));
   if (it.trong) return st('Em này chưa có tin hoặc số tiền đợt này, bấm nút để tự nhập.', true);
   if (!it.qr) return st('Em này chưa có link QR.', true);
   thiep(it).then(b => { if (zaloItems()[i] === it) img.src = URL.createObjectURL(b); }).catch(e => st('Không tạo được thiệp: ' + e.message, true));
   const j = nextIdx(); if (j >= 0 && items[j].qr) thiep(items[j]).catch(() => {});
 }
-function oneLabel(it) { return it.trong ? 'Nhập tin và số tiền cho em này' : step === 0 ? 'Copy thiệp' : (nextIdx() < 0 ? 'Đã hết danh sách' : 'Sang em tiếp và copy thiệp'); }
+function oneLabel(it) { return it.trong ? 'Nhập tin và số tiền cho em này' : step === 0 ? 'Copy thiệp' : (nextIdx() < 0 ? 'Đã gửi em này' : 'Đã gửi, sang em tiếp'); }
 function nextIdx() { const z = zaloItems(); for (let j = i + 1; j < z.length; j++) if (!z[j].trong) return j; return -1; }
 function go(d) { const z = zaloItems(); i = Math.min(z.length - 1, Math.max(0, i + d)); step = 0; render(); }
-function markSent(it) {
-  const s = sentSet(); s.add(it.key); store.set(sentKey(), [...s]);
-  document.querySelectorAll('.people button').forEach(b => { if (b.dataset.key === it.key && !b.querySelector('.m')) b.append(el('span', { class: 'm done', textContent: 'đã copy' })); });
-}
 async function copyCard() {
   const it = zaloItems()[i]; if (!it || !it.qr) return st('Em này chưa có link QR.', true);
   const blob = thiep(it);
   try {
     await navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })]);
     step = 1; const b = $('one'); if (b) b.textContent = oneLabel(it);
-    markSent(it); st('Đã copy thiệp, sang Zalo dán rồi gửi.');
+    st('Đã copy thiệp, sang Zalo dán rồi gửi. Gửi xong bấm "Đã gửi".');
   } catch (e) {
     try {
       const f = new File([await blob], fullName(it) + '.png', { type: 'image/png' });
-      if (navigator.canShare && navigator.canShare({ files: [f] })) { await navigator.share({ files: [f] }); step = 1; markSent(it); return st('Đã mở chia sẻ thiệp.'); }
+      if (navigator.canShare && navigator.canShare({ files: [f] })) { await navigator.share({ files: [f] }); step = 1; const b = $('one'); if (b) b.textContent = oneLabel(it); return st('Đã mở chia sẻ thiệp. Gửi xong bấm "Đã gửi".'); }
     } catch (e2) { /* falls through to the hint */ }
     st('Không copy được: nhấn giữ hoặc chuột phải vào ảnh để sao chép.', true);
   }
@@ -788,8 +948,9 @@ function oneClick() {
   const it = zaloItems()[i];
   if (it.trong) return moSua(it);
   if (step === 0) return copyCard();
+  if (!sentOf(cur.tab, cur.dot, it.key)) logSent(cur.tab, cur.dot, [it], 'da-gui');
   const j = nextIdx();
-  if (j < 0) return st('Đã gửi hết danh sách lớp này.');
+  if (j < 0) { render(); return st('Đã gửi hết danh sách lớp này.'); }
   i = j; step = 0; render(); copyCard();
 }
 
@@ -836,6 +997,9 @@ async function afterLogin() {
   } catch (e) { notice('Chưa đọc được danh sách lớp: ' + e.message, true); }
   if (pending.length) flush();
   loadMoves();
+  loadWho();
+  loadSent(true).then(flushSent);
+  loadAck();
   // Read the calendar first so classes due for collection are refreshed before the others.
   await loadCal();
   loadAll(true);
@@ -864,7 +1028,7 @@ window.addEventListener('load', () => {
   $('btnOut').addEventListener('click', () => {
     if (pending.length && !confirm('Còn ' + pending.length + ' lần tick chưa lưu sẽ bị bỏ. Vẫn đăng xuất?')) return;
     if (token) google.accounts.oauth2.revoke(token, () => {});
-    token = null; pending = []; cal = null; sched = null; khoMemo = null;
+    token = null; pending = []; cal = null; sched = null; khoMemo = null; who = ''; sentRows = []; sentIdx = {}; sentQueue = []; ackMap = {}; bookDraft = null;
     try { sessionStorage.removeItem('hp_token'); } catch (e) { /* nothing to clear */ }
     store.clear();
     showLogin(false);
@@ -873,7 +1037,7 @@ window.addEventListener('load', () => {
   $('edBo').addEventListener('click', () => ghiRieng('', ''));
   $('edHuy').addEventListener('click', () => $('sua').close());
   openStore().then(() => {
-    pending = store.get(QKEY) || []; cal = store.get('hp_cal'); sched = store.get('hp_sched');
+    pending = store.get(QKEY) || []; cal = store.get('hp_cal'); sched = store.get('hp_sched'); restoreSent();
     const wait = setInterval(() => { if (window.google && google.accounts) {
       clearInterval(wait); initAuth(); $('btnLogin').disabled = false;
       try {

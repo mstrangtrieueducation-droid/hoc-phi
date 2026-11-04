@@ -22,7 +22,7 @@
 
   /** Ranges to read for one class, in the order buildClass expects them. */
   function classRanges(tab) {
-    return ['A1:E8', 'J17:U36', 'A' + TRACK_FIRST + ':BM413', 'BP40:BP70'].map(r => quote(tab) + '!' + r);
+    return ['A1:E17', 'J17:U36', 'A' + TRACK_FIRST + ':BM413', 'BP40:BP70', 'AK20:AK39'].map(r => quote(tab) + '!' + r);
   }
 
   /** The column of the period's "Trạng thái", 1-based, from the tracking rows; -1 if the block is not there. */
@@ -99,7 +99,21 @@
         soTien: x.soTien, auto: boQr(x.auto), amount: Number(tien) || x.tienSheet || x.tienAuto, warn });
     });
     const label = name => { let out = ''; top.forEach(r => (r || []).forEach((v, c) => { if (v === name && !out) out = String(r[c + 1] || ''); })); return out; };
-    return { tab, lop: 'LỚP ' + tab, dot, statusCol, items, nextDot: label('Đợt học cần thu'), dueDate: label('Ngày cần thu tiền'), dueState: label('Trạng thái thu tiền') };
+    const book = n => { const v = label('Tên sách/tài liệu ' + n).trim(); return v === '0' ? '' : v; };
+    return { tab, lop: 'LỚP ' + tab, dot, statusCol, items, nextDot: label('Đợt học cần thu'), dueDate: label('Ngày cần thu tiền'), dueState: label('Trạng thái thu tiền'),
+      start: label('Ngày đầu đợt đã qua'), end: label('Ngày kết thúc đợt đã qua'), sessions: label('Số buổi đợt mới'), fee: label('Học phí đợt mới'),
+      bookTotal: label('Tổng tiền sách/tài liệu'), total: label('Tổng cần thu'), books: [1, 2, 3, 4, 5].map(book),
+      lessons: (raw.lessons || []).map(r => dayOf((r || [])[0])).filter(n => !isNaN(n)), history: pastDots(hist, headRow) };
+  }
+
+  /** Collections already recorded in J:T, newest first. The first row under the header is the live formula for the coming đợt, so it is left out. */
+  function pastDots(hist, headRow) {
+    if (headRow < 0) return [];
+    const c = hist[headRow].indexOf('Đợt thu');
+    return hist.slice(headRow + 2).filter(r => /^\d+$/.test(String((r || [])[c]).trim())).map(r => ({
+      dot: String(r[c]).trim(), paidOn: String(r[c - 2] || ''), from: String(r[c + 1] || ''), to: String(r[c + 2] || ''), fee: String(r[c + 3] || ''),
+      book: /^0?$/.test(String(r[c + 4] || '').trim()) ? '' : String(r[c + 4]).trim(), total: String(r[c + 6] || ''), detail: String(r[c + 8] || '') }))
+      .sort((a, b) => Number(b.dot) - Number(a.dot));
   }
 
   /**
@@ -378,15 +392,19 @@
     return [...new Set((days || []).map(n => (n + 3) % 7))].sort((a, b) => a - b).map(k => WEEKDAY[k]).join(', ');
   }
 
-  /** Years that have lessons but no row in NGHI_LE, with the classes reaching into them. */
-  function holidayGaps(holidays, lessonsByClass) {
-    const yearOf = day => new Date(day * 86400000).getUTCFullYear(), have = new Set(), out = {};
-    (holidays || []).forEach(v => { const n = dayOf(v); if (!isNaN(n)) have.add(yearOf(n)); });
-    Object.keys(lessonsByClass || {}).forEach(tab => {
-      new Set(lessonsByClass[tab].map(yearOf)).forEach(y => { if (!have.has(y)) (out[y] = out[y] || []).push(tab); });
+  /** Same key as hp_orAckKey_ in the Apps Script reminder, e.g. 'kids33|6'. */
+  const ackKey = (tab, dot) => ascii(tab).toLowerCase().replace(/\s+/g, '') + '|' + Number(dot);
+
+  /** Log rows [time, class, đợt, name, English name, student key, action, who] as class|đợt → key → latest mark. '*' is the whole class. */
+  function sentIndex(rows) {
+    const idx = {};
+    (rows || []).forEach(r => {
+      if (!r || !r[1] || !r[5]) return;
+      const c = idx[r[1] + '|' + r[2]] = idx[r[1] + '|' + r[2]] || {};
+      if (r[6] === 'bo') delete c[r[5]]; else c[r[5]] = { at: String(r[0] || ''), by: String(r[7] || '') };
     });
-    return out;
+    return idx;
   }
 
-  return { dayOf, dayText, dayNow, calendar, classKey, weekSessions, scheduleGaps, weekdays, holidayGaps, leaveStatus, classifyMoves, moveInputs, qrFromMessage, intakeDue, EXIT_ACCOUNT, NEW_TAB, EXIT_TAB, buildClass, classRanges, freshRanges, freshAt, planPaid, planUnpaid, planOverride, findPeriodCol, colA1, quote, fmt, digits, clean, isPaid, todayText, ACTIVE };
+  return { dayOf, dayText, dayNow, calendar, classKey, weekSessions, scheduleGaps, weekdays, ackKey, sentIndex, leaveStatus, classifyMoves, moveInputs, qrFromMessage, intakeDue, EXIT_ACCOUNT, NEW_TAB, EXIT_TAB, buildClass, classRanges, freshRanges, freshAt, planPaid, planUnpaid, planOverride, findPeriodCol, colA1, quote, fmt, digits, clean, isPaid, todayText, ACTIVE };
 });
