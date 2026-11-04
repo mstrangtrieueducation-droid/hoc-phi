@@ -379,6 +379,23 @@ function renderNotices() {
       textContent: (flushing ? 'Đang lưu ' : 'Chờ lưu ') + pending.length + ' lần tick. Đừng đóng trang.' + (stuck.length ? ' Lỗi: ' + stuck[0].error : '') }));
   }
   if (sentErr) box.append(el('div', { class: 'notice warn', role: 'status', textContent: sentErr }));
+  const nhac = nhacHomNay();
+  if (nhac) box.append(nhac);
+}
+/** On every page, on the days a reminder falls due. "Để sau" hides it until tomorrow; the list on Tổng quan stays. */
+function nhacHomNay() {
+  if ($('app').hidden || !(sentAt || sentRows.length)) return null;
+  const today = L.dayNow(new Date());
+  if (store.get('hp_nhac_an') === today) return null;
+  const rows = nhacLaiRows().map(c => ({ tab: c.data.tab, list: c.list.filter(r => r.onCycle) })).filter(c => c.list.length);
+  if (!rows.length) return null;
+  const all = rows.reduce((n, c) => n + c.list.length, 0), blank = rows.reduce((n, c) => n + c.list.filter(r => r.blank).length, 0);
+  const openThu = name => { tab = 'thu'; filter = 'xem'; openClass(name); };
+  return el('div', { class: 'notice warn', role: 'status', id: 'nhacHomNay' }, [
+    el('b', { textContent: 'Hôm nay đến lượt nhắc ' + all + ' em' }),
+    el('span', { textContent: ' (' + (all - blank) + ' chưa nộp, ' + blank + ' chưa ghi). Bấm vào lớp để xem:' }),
+    el('div', { style: 'display:flex;flex-wrap:wrap;gap:6px;margin-top:8px' }, rows.map(c => el('button', { class: 'quiet', textContent: c.tab + ' (' + c.list.length + ')', onclick: () => openThu(c.tab) }))
+      .concat(el('button', { class: 'quiet', textContent: 'Để sau', onclick: () => { store.set('hp_nhac_an', today); renderNotices(); } })))]);
 }
 function showLogin(again) {
   // Mid-work the page stays up: the next click renews the sign-in, and unsaved ticks wait in their queue.
