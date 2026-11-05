@@ -310,6 +310,9 @@
       else if (again.length) { pairOf.set(out, again[0]); pairOf.set(again[0], out); out.cameBack = again[0].cameBack = true; }
     });
     const hasNew = e => (newRows || []).some(r => r && r[0] === e.cls && sameName(r[1], e.name));
+    // A row added by hand before the roster caught up: the later roster change is that same move, not a new one.
+    const movedByHand = e => (exitRows || []).some(r => r && sameName(r[0], e.name) && String(r[2] || '') === 'Chuyển lớp'
+      && (e.type === 'ra' ? String(r[4] || '') === e.cls : String(r[3] || '') === e.cls));
     const hasExit = (e, reason, dest) => (exitRows || []).some(r => r && sameName(r[0], e.name) && String(r[2] || '') === reason
       && (reason === 'Chuyển lớp' ? String(r[3] || '') === dest : String(r[4] || '') === e.cls));
     const out = [];
@@ -317,6 +320,7 @@
       if (e.ignored || e.cameBack) return;
       const pair = pairOf.get(e);
       if (pair && e.type === 'vao') return; // the "ra" side of a pair reports the transfer
+      if (!pair && movedByHand(e)) return;
       const base = { name: e.name, eng: e.eng, at: e.at, rows: pair ? e.rows.concat(pair.rows) : e.rows };
       if (pair) {
         if (hasExit(e, 'Chuyển lớp', pair.cls)) return;
@@ -395,6 +399,27 @@
     if (!m || !BANK_CODE[m[2]] || !amount) return '';
     return 'https://img.vietqr.io/image/' + BANK_CODE[m[2]] + '-' + m[1] + '-compact2.png?amount=' + amount
       + '&addInfo=' + encodeURIComponent(ascii(info).toUpperCase()) + '&accountName=' + encodeURIComponent(ascii(m[3]).toUpperCase());
+  }
+
+  /**
+   * Leavers and transfers recorded lately, by "class|name". A student added by hand can still be on the class list until the roster
+   * catches up, and must not be chased for that class. Sixty days, so someone who later came back is billed again.
+   */
+  function recentExits(exitRows, today) {
+    const out = {};
+    (exitRows || []).forEach(r => {
+      if (!r || !r[1] || !r[23]) return;
+      const day = dayOf(r[7]), kind = String(r[5] || '');
+      if (isNaN(day) || today - day > 60 || !/Nghỉ học|Chuyển lớp/.test(kind)) return;
+      out[String(r[23]).trim() + '|' + clean(r[1])] = { kind, date: String(r[7]), to: String(r[6] || '') };
+    });
+    return out;
+  }
+  /** F382:BM382 and a student's F:BM row as the blocks leaveStatus reads, for a move that has no roster snapshot. */
+  function blocksOf(heads, row) {
+    const out = [], h = (heads && heads[0]) || [], r = (row && row[0]) || [];
+    for (let c = 0; c < h.length; c += 3) if (String(h[c] || '').trim()) out.push({ d: String(h[c]).trim(), s: String(r[c] || ''), n: String(r[c + 2] || '') });
+    return out;
   }
 
   /** Unpaid rows of both intake tabs that are ready to collect or need checking. Rows come from row 3 (HS MỚI, A:U) and row 4 (HS NGHI, A:X). */
@@ -545,5 +570,5 @@
     return (students || []).filter(x => !(marks && marks[x.key]));
   }
 
-  return { free, deferred, remindDue, REMIND_AFTER, REMIND_EVERY, sentDay, notMarked, dayOf, dayText, dayNow, calendar, classKey, weekSessions, scheduleGaps, scheduleLessons, weekdays, ackKey, sentIndex, leaveStatus, classifyMoves, moveInputs, qrFromMessage, intakeDue, EXIT_ACCOUNT, NEW_TAB, EXIT_TAB, buildClass, dropGop, addGop, discInput, discText, discValue, planDiscount, locate, classRanges, freshRanges, freshAt, planPaid, planUnpaid, planOverride, findPeriodCol, colA1, quote, fmt, digits, clean, isPaid, todayText, ACTIVE };
+  return { recentExits, blocksOf, free, deferred, remindDue, REMIND_AFTER, REMIND_EVERY, sentDay, notMarked, dayOf, dayText, dayNow, calendar, classKey, weekSessions, scheduleGaps, scheduleLessons, weekdays, ackKey, sentIndex, leaveStatus, classifyMoves, moveInputs, qrFromMessage, intakeDue, EXIT_ACCOUNT, NEW_TAB, EXIT_TAB, buildClass, dropGop, addGop, discInput, discText, discValue, planDiscount, locate, classRanges, freshRanges, freshAt, planPaid, planUnpaid, planOverride, findPeriodCol, colA1, quote, fmt, digits, clean, isPaid, todayText, ACTIVE };
 });

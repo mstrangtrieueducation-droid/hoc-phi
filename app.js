@@ -116,7 +116,9 @@ let classes = [], cur = null, curAt = 0, curFresh = false, loadSeq = 0, i = 0, s
 let view = 'home', tab = 'thu', filter = 'can', query = '', loadingAll = false, loadedCount = 0, loadTotal = 0;
 const picked = {}; // dates chosen but not yet ticked, so a quiet refresh cannot reset them to today
 let noticeText = '', noticeErr = false;
-const canThu = x => !x.paid && !L.deferred(x) && !L.free(x);
+let roiMap = {};
+const daRoi = x => { const p = String(x.key || '').split('|'); return roiMap[p[1] + '|' + L.clean(x.name)] || null; };
+const canThu = x => !x.paid && !L.deferred(x) && !L.free(x) && !daRoi(x);
 const daThu = x => x.paid && !L.free(x);
 const zaloItems = () => cur ? cur.items.filter(canThu) : [];
 const fullName = x => x.name + (x.eng ? ' (' + x.eng + ')' : '');
@@ -491,14 +493,14 @@ function nhacHomNay() {
   const unticked = chuaDanhDau().filter(r => r.left);
   if (!rows.length && !unticked.length) return null;
   const all = rows.reduce((n, c) => n + c.list.length, 0), blank = rows.reduce((n, c) => n + c.list.filter(r => r.blank).length, 0);
-  const openAt = (name, t, f) => () => { tab = t; filter = f; openClass(name); if (t === 'zalo') loadSent(); };
-  const buttons = list => el('div', { style: 'display:flex;flex-wrap:wrap;gap:6px;margin:8px 0' }, list);
-  return el('div', { class: 'notice warn', role: 'status', id: 'nhacHomNay' }, [
-    unticked.length ? el('div', {}, [el('b', { textContent: 'Chưa tick đã gửi Zalo: ' + unticked.reduce((n, r) => n + r.left.length, 0) + ' em.' }), el('span', { textContent: ' Bấm vào lớp để rà soát:' }),
-      buttons(unticked.map(r => el('button', { class: 'quiet', textContent: r.x.tab + ' (' + r.left.length + ')', onclick: openAt(r.x.tab, 'zalo', 'can') })))]) : '',
-    rows.length ? el('div', {}, [el('b', { textContent: 'Hôm nay đến lượt nhắc ' + all + ' em' }), el('span', { textContent: ' (' + (all - blank) + ' chưa nộp, ' + blank + ' chưa ghi). Bấm vào lớp để xem:' }),
-      buttons(rows.map(c => el('button', { class: 'quiet', textContent: c.tab + ' (' + c.list.length + ')', onclick: openAt(c.tab, 'thu', 'xem') })))]) : '',
-    el('button', { class: 'quiet', textContent: 'Để sau', onclick: () => { store.set('hp_nhac_an', today); renderNotices(); } })]);
+  const parts = [];
+  if (unticked.length) parts.push(unticked.reduce((n, r) => n + r.left.length, 0) + ' em chưa tick đã gửi Zalo');
+  if (rows.length) parts.push(all + ' em đến lượt nhắc (' + (all - blank) + ' chưa nộp, ' + blank + ' chưa ghi)');
+  const toList = () => { const go = () => { const t = $(unticked.length ? 'nhacGui' : 'nhacLai'); if (t) t.scrollIntoView({ behavior: 'smooth' }); }; if (view === 'home') go(); else { goTo('home'); setTimeout(go, 50); } };
+  return el('div', { class: 'notice warn top-note', role: 'status', id: 'nhacHomNay' }, [
+    el('span', {}, [el('b', { textContent: 'Hôm nay: ' }), parts.join(' · ')]),
+    el('span', { class: 'top-acts' }, [el('button', { class: 'quiet', textContent: 'Xem danh sách', onclick: toList }),
+      el('button', { class: 'quiet', textContent: 'Để sau', onclick: () => { store.set('hp_nhac_an', today); renderNotices(); } })])]);
 }
 function showLogin(again) {
   // Mid-work the page stays up: the next click renews the sign-in, and unsaved ticks wait in their queue.
@@ -527,7 +529,7 @@ let who = '', sentRows = [], sentIdx = {}, sentQueue = [], sentAt = 0, sentBusy 
 const personName = mail => (/^mstrang/.test(mail) ? 'Cô Trang' : /^im\.son/.test(mail) ? 'Sơn' : String(mail).split('@')[0]);
 const sentOf = (tabName, dot, key) => { const c = sentIdx[tabName + '|' + dot]; return c ? c[key] || c['*'] || null : null; };
 const sentText = s => (s.lan ? 'Đã nhắc lại lần ' + s.lan + ' ' : 'Đã gửi ') + s.at + (s.by ? ' · ' + s.by : '');
-function restoreSent() { sentQueue = store.get('hp_sentq') || []; sentRows = (store.get('hp_sentlog') || []).concat(sentQueue); sentIdx = L.sentIndex(sentRows); ackMap = store.get('hp_ack') || {}; ackDue = store.get('hp_ackdue') || {}; }
+function restoreSent() { roiMap = store.get('hp_roi') || {}; sentQueue = store.get('hp_sentq') || []; sentRows = (store.get('hp_sentlog') || []).concat(sentQueue); sentIdx = L.sentIndex(sentRows); ackMap = store.get('hp_ack') || {}; ackDue = store.get('hp_ackdue') || {}; }
 async function loadWho() {
   if (linkKey) {
     try { const me = await cong({ op: 'ai' }); who = me.name; linkRole = me.role; $('navNguoi').hidden = linkRole !== 'chu'; } catch (e) { console.error(e.message); }
@@ -673,9 +675,11 @@ function calRow(x) {
   const chipClass = x.group === 'den' || x.group === 'qua' ? 'chip' : x.group === 'sap' ? 'chip warn-soft' : 'chip idle';
   const prev = Number(x.dot) - 1, kids = [
     el('div', { class: 'top' }, [el('b', { textContent: x.tab }), el('span', { class: chipClass, textContent: x.state })]),
-    el('div', { class: 'cal-line' }, ['Thu đợt ' + x.dot + ', hạn ', el('strong', { textContent: dueText(x) })]),
-    el('div', { class: 'cal-line sub', textContent: (x.start && x.end ? 'Đợt ' + prev + ' học ' + x.start + ' đến ' + x.end : '') }),
-    el('div', { class: 'cal-line sub', textContent: L.fmt(x.total) + ' đ' + (x.book ? ' · ' + x.book : '') + (s ? ' · đã nộp ' + s.paid + '/' + s.total : '') })];
+    el('dl', { class: 'kv' }, [
+      el('dt', { textContent: 'Thu đợt ' + x.dot }), el('dd', {}, [el('strong', { textContent: dueText(x) })]),
+      x.start && x.end ? el('dt', { textContent: 'Đợt ' + prev + ' học' }) : '', x.start && x.end ? el('dd', { textContent: x.start + ' đến ' + x.end }) : '',
+      el('dt', { textContent: 'Số tiền' }), el('dd', { textContent: L.fmt(x.total) + ' đ' + (x.book ? ' · ' + x.book : '') }),
+      s ? el('dt', { textContent: 'Đã nộp' }) : '', s ? el('dd', { textContent: s.paid + '/' + s.total + ' em' }) : ''])];
   const unpaid = c && String(c.data.dot) === x.dot ? c.data.items.filter(canThu) : [];
   const gone = unpaid.filter(y => sentOf(x.tab, x.dot, y.key)).length;
   if (gone && !ackMap[L.ackKey(x.tab, x.dot)]) kids.push(el('div', { class: 'cal-line sent', textContent: 'Đã gửi ' + gone + '/' + unpaid.length + ' em chưa nộp' }));
@@ -729,7 +733,9 @@ async function loadMoves() {
     const events = await batchGet(["'_BIEN_DONG_HS'!A2:I3000"]).then(x => x[0]).catch(e => { if (/Unable to parse range/.test(e.message)) return []; throw e; });
     const [news, exits, bookRows] = await batchGet([L.quote(L.NEW_TAB) + '!A3:U199', L.quote(L.EXIT_TAB) + '!A4:X400', "'DANH_MUC_SACH'!A4:B80"]);
     bookList = readBookList(bookRows);
+    roiMap = L.recentExits(exits, L.dayNow(new Date())); store.set('hp_roi', roiMap);
     moves = {
+      exits,
       list: L.classifyMoves(events, news.map(r => [r[1], r[2], r[3]]), exits.map(r => [r[1], r[2], r[5], r[6], r[23]]), Date.now()),
       due: L.intakeDue(news, exits), at: Date.now()
     };
@@ -743,6 +749,9 @@ function renderMoves(box) {
       el('div', { class: 'sub', textContent: movesLoading ? 'Đang đọc, file có thể đang bận nên có thể mất vài phút…' : moves ? 'Số mới lúc ' + new Date(moves.at).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' }) : '' })]),
     el('button', { textContent: 'Tải lại', disabled: movesLoading, onclick: loadMoves })]));
   if (!moves) { box.append(el('div', { class: 'empty', textContent: movesLoading ? 'Đang đọc, xin đợi…' : 'Chưa đọc được. Bấm Tải lại để thử lại.' })); return; }
+  box.append(el('div', { class: 'card panel add-move' }, [el('div', {}, [el('b', { textContent: 'Có em nghỉ hoặc chuyển lớp?' }),
+    el('div', { class: 'sub', textContent: 'Chọn trực tiếp ở đây, không cần chờ Theo dõi toàn diện. Khi toàn diện cập nhật sau, app biết là cùng một việc và không hỏi lại.' })]),
+    el('button', { class: 'primary', textContent: 'Thêm nghỉ / chuyển lớp', onclick: moThem })]));
   const ready = moves.list.filter(m => !m.wait), waiting = moves.list.filter(m => m.wait);
   box.append(el('h2', { class: 'section', textContent: 'Cần duyệt (' + ready.length + ')' }));
   box.append(ready.length ? el('div', { class: 'fee-list' }, ready.map(moveRow)) : el('div', { class: 'empty small', textContent: 'Không có thay đổi nào cần duyệt.' }));
@@ -801,30 +810,77 @@ async function tickDue(it, iso) {
     notice('Đã lưu ' + it.name + '.');
   } catch (e) { notice('Không lưu được: ' + e.message, true); }
 }
+/** A leaver or transfer chosen by hand: the same dialog as an approval, with the student picked here. */
+function moThem() {
+  const m = { manual: true, id: 'tay', kind: 'nghi', name: '', eng: '', from: '', to: '', row: 0, at: Date.now(), blocks: null, rows: [] };
+  const other = () => el('option', { value: '', textContent: 'Chọn lớp' });
+  const lop = (id, label, on) => { const sel = el('select', { id, 'aria-label': label, onchange: e => on(e.target.value) }, [other()].concat(classes.map(n => el('option', { value: n, textContent: n })))); return sel; };
+  const hs = el('select', { id: 'dvHs', 'aria-label': 'Học sinh', disabled: true, onchange: () => chonHs() }, [el('option', { value: '', textContent: 'Chọn lớp trước' })]);
+  const ten = el('input', { id: 'dvTenTay', placeholder: 'Họ tên', 'aria-label': 'Họ tên', hidden: true, oninput: e => { const had = !!m.name; m.name = e.target.value.trim(); if (had !== !!m.name) veDuyet(m); else if (m.name) $('dvTen').textContent = KIND[m.kind] + ': ' + fullName(m); } });
+  const eng = el('input', { id: 'dvEngTay', placeholder: 'Tên tiếng Anh', 'aria-label': 'Tên tiếng Anh', hidden: true, oninput: e => { m.eng = e.target.value.trim(); } });
+  let items = [];
+  const chonHs = () => {
+    const v = hs.value, khac = v === 'khac', it = !khac && v !== '' ? items[Number(v)] : null;
+    ten.hidden = eng.hidden = !khac;
+    m.name = it ? it.name : khac ? ten.value.trim() : ''; m.eng = it ? String(it.eng || '') : khac ? eng.value.trim() : ''; m.row = it ? it.row : 0;
+    veDuyet(m);
+  };
+  const tuLop = lop('dvTu', 'Lớp đang học', async name => {
+    m.from = name; m.name = ''; m.eng = ''; m.row = 0; items = []; ten.hidden = eng.hidden = true;
+    hs.replaceChildren(el('option', { value: '', textContent: name ? 'Đang đọc danh sách…' : 'Chọn lớp trước' })); hs.disabled = true; veDuyet(m);
+    if (!name) return;
+    const c = store.get('hp_cls_' + name);
+    try { items = c ? c.data.items : (await readClass(name)).items; } catch (e) { items = []; }
+    if (m.from !== name) return;
+    hs.replaceChildren(el('option', { value: '', textContent: 'Chọn học sinh' }), ...items.map((x, k) => el('option', { value: String(k), textContent: fullName(x) })), el('option', { value: 'khac', textContent: 'Em chưa có tên trong danh sách…' }));
+    hs.disabled = false;
+  });
+  const denLop = lop('dvDen', 'Chuyển đến lớp', name => { m.to = name; veDuyet(m); });
+  const denWrap = el('div', { hidden: true }, [el('label', { textContent: 'Chuyển đến lớp' }), denLop]);
+  const loai = el('select', { id: 'dvLoai', 'aria-label': 'Việc', onchange: e => { m.kind = e.target.value; denWrap.hidden = m.kind !== 'chuyen'; veDuyet(m); } },
+    [el('option', { value: 'nghi', textContent: 'Nghỉ học' }), el('option', { value: 'chuyen', textContent: 'Chuyển lớp' })]);
+  $('dvChon').replaceChildren(el('label', { textContent: 'Việc' }), loai, el('label', { textContent: 'Lớp đang học' }), tuLop, el('label', { textContent: 'Học sinh' }), hs, ten, eng, denWrap);
+  $('dvChon').hidden = false;
+  moDuyet(m);
+}
 function moDuyet(m) {
-  const cls = m.kind === 'nghi' ? m.from : m.to;
-  $('dvTen').textContent = KIND[m.kind] + ': ' + fullName(m);
-  $('dvRoute').textContent = m.kind === 'chuyen' ? m.from + ' → ' + m.to : cls;
-  $('dvDateLabel').textContent = m.kind === 'moi' ? 'Ngày vào lớp' : m.kind === 'chuyen' ? 'Ngày chuyển' : 'Ngày nghỉ';
+  if (!m.manual) { $('dvChon').hidden = true; $('dvChon').replaceChildren(); }
+  dvMove = m; dvHist = null; dvBookList = ['']; veSachDuyet(m);
   $('dvDate').value = isoOf(m.at); $('dvDate').max = '';
+  $('dvDate').onchange = () => { if (m.kind === 'nghi' && dvHist) capNhatNghi(m); };
+  $('duyet').dataset.id = m.id; dvSeen = '';
+  veDuyet(m);
+  $('duyet').showModal();
+}
+/** Everything in the dialog that follows from who and where, drawn again whenever a hand-picked move changes. */
+function veDuyet(m) {
+  const cls = m.kind === 'nghi' ? m.from : m.to, ready = !!m.name && !!m.from && (m.kind !== 'chuyen' || !!m.to) || !m.manual;
+  $('dvTen').textContent = m.manual ? (m.name ? KIND[m.kind] + ': ' + fullName(m) : 'Thêm nghỉ hoặc chuyển lớp') : KIND[m.kind] + ': ' + fullName(m);
+  $('dvRoute').textContent = !ready ? '' : m.kind === 'chuyen' ? m.from + ' → ' + m.to : cls;
+  $('dvDateLabel').textContent = m.kind === 'moi' ? 'Ngày vào lớp' : m.kind === 'chuyen' ? 'Ngày chuyển' : 'Ngày nghỉ';
   $('dvAcc').textContent = m.kind === 'nghi' ? 'Thu vào tài khoản: ' + L.EXIT_ACCOUNT : '';
   $('dvErr').textContent = '';
   $('dvLuu').hidden = false; $('dvLuu').disabled = false; $('dvLuu').className = 'primary'; $('dvKhongThu').hidden = true; $('dvLuu').textContent = 'Thêm vào danh sách thu';
-  $('dvStatus').textContent = ''; dvHist = null;
-  if (m.kind === 'nghi') {
+  $('dvStatus').textContent = m.manual && !ready ? 'Chọn đủ ở trên rồi điền ngày.' : ''; dvHist = null;
+  if (m.kind === 'nghi' && ready) {
     $('dvStatus').textContent = 'Đang xem em đã đóng đợt đó chưa…';
     $('dvLuu').disabled = true;
-    batchGet([L.quote(m.from) + '!J18:N36']).then(([h]) => { if ($('duyet').dataset.id === m.id) { dvHist = h; capNhatNghi(m); } })
-      .catch(() => { dvHist = []; capNhatNghi(m); });
+    const q = L.quote(m.from), who = m.name + '|' + m.from + '|' + m.kind, wanted = [q + '!J18:N36'].concat(m.manual && m.row ? [q + '!F382:BM382', q + '!F' + m.row + ':BM' + m.row] : []);
+    batchGet(wanted).then(got => {
+      if ($('duyet').dataset.id !== m.id || m.name + '|' + m.from + '|' + m.kind !== who) return;
+      if (m.manual) m.blocks = m.row ? L.blocksOf(got[1], got[2]) : null;
+      dvHist = got[0]; capNhatNghi(m);
+    }).catch(() => { dvHist = []; capNhatNghi(m); });
   }
-  $('dvDate').onchange = () => { if (m.kind === 'nghi' && dvHist) capNhatNghi(m); };
-  dvBookList = ['']; veSachDuyet(m);
   // Preselect what the student already has in the class they come from or go to.
-  const c = store.get('hp_cls_' + (m.from || m.to)), had = c && c.data.items.find(x => x.name === m.name && String(x.eng || '') === String(m.eng || ''));
-  dvDisc = discPicker(had ? had.disc : ''); $('dvDisc').replaceChildren(dvDisc.node);
-  $('duyet').dataset.id = m.id; $('duyet').showModal();
+  const seen = m.from + '|' + m.to + '|' + m.name;
+  if (seen !== dvSeen) {
+    dvSeen = seen;
+    const c = store.get('hp_cls_' + (m.from || m.to)), had = c && c.data.items.find(x => x.name === m.name && String(x.eng || '') === String(m.eng || ''));
+    dvDisc = discPicker(had ? had.disc : ''); $('dvDisc').replaceChildren(dvDisc.node);
+  }
 }
-let dvHist = null, dvBookList = [''], dvDisc = null;
+let dvHist = null, dvBookList = [''], dvDisc = null, dvMove = null, dvSeen = '';
 /** Books are optional for every kind of move: one box, "+ Thêm sách" up to the 5 columns the tabs have. */
 function veSachDuyet(m) {
   const list = bookList || [], price = name => (list.find(b => b.name === name) || { price: 0 }).price;
@@ -855,8 +911,9 @@ function capNhatNghi(m) {
   }
 }
 async function khongThuMove() {
-  const m = moves.list.find(x => x.id === $('duyet').dataset.id); if (!m) return;
-  if (dvBookList.some(Boolean)) return luuDuyet(true);
+  const m = dvMove; if (!m) return;
+  // A hand-picked leaver has no roster event to mark, so a row with no tuition records that nothing is owed.
+  if (m.manual || dvBookList.some(Boolean)) return luuDuyet(true);
   $('dvErr').textContent = 'Đang lưu…';
   try {
     await batchWrite(m.rows.map(r => ({ range: "'_BIEN_DONG_HS'!H" + r, values: [['khong-thu']] })));
@@ -864,8 +921,14 @@ async function khongThuMove() {
   } catch (e) { $('dvErr').textContent = 'Không lưu được: ' + e.message; }
 }
 async function luuDuyet(onlyBooks) {
-  const m = moves.list.find(x => x.id === $('duyet').dataset.id); if (!m) return;
+  const m = dvMove; if (!m) return;
   const iso = $('dvDate').value;
+  if (m.manual) {
+    if (!m.from || !m.name) { $('dvErr').textContent = 'Hãy chọn lớp và học sinh.'; return; }
+    if (m.kind === 'chuyen' && (!m.to || m.to === m.from)) { $('dvErr').textContent = 'Hãy chọn lớp chuyển đến, khác lớp đang học.'; return; }
+    const same = (moves.exits || []).find(r => r && L.clean(r[1]) === L.clean(m.name) && String(r[23] || '') === m.from && String(r[5] || '') === (m.kind === 'chuyen' ? 'Chuyển lớp' : 'Nghỉ học'));
+    if (same && !confirm(fullName(m) + ' đã có dòng ' + same[5] + ' từ ' + m.from + (same[7] ? ' ngày ' + same[7] : '') + '. Vẫn thêm dòng mới?')) return;
+  }
   if (!iso) { $('dvErr').textContent = 'Hãy chọn ngày.'; return; }
   const [y, mo, d] = iso.split('-');
   let disc;
@@ -876,7 +939,7 @@ async function luuDuyet(onlyBooks) {
     await ghiDongMoi(input);
     $('duyet').close();
     await loadMoves();
-    notice('Đã thêm ' + m.name + ' vào tab ' + input.tab + '. Nếu chưa thấy số tiền ở mục Cần thu, đợi 1–2 phút rồi bấm Tải lại.');
+    notice('Đã thêm ' + m.name + ' vào tab ' + input.tab + '. Nếu chưa thấy số tiền ở mục Cần thu, đợi 1–2 phút rồi bấm Tải lại.' + (m.manual ? ' Khi kịp, nhớ cập nhật Theo dõi toàn diện.' : ''));
   } catch (e) { $('dvErr').textContent = 'Không lưu được: ' + e.message; }
   $('dvLuu').disabled = false;
 }
@@ -950,35 +1013,38 @@ function daGuiHet(x) {
 /** Who to remind again in one class: on the class's own đợt, so a class that has rolled over still counts. */
 function nhacCua(data) {
   const key = L.ackKey(data.tab, data.dot);
-  return L.remindDue(data.items, sentIdx[data.tab + '|' + data.dot], L.dayNow(new Date()), ackMap[key] ? L.dayOf(ackDue[key]) : NaN);
+  return L.remindDue(data.items.filter(x => !daRoi(x)), sentIdx[data.tab + '|' + data.dot], L.dayNow(new Date()), ackMap[key] ? L.dayOf(ackDue[key]) : NaN);
 }
 const nhacLaiRows = () => classRows().filter(r => r.data).map(r => ({ data: r.data, list: nhacCua(r.data) })).filter(r => r.list.length);
 const ngayNgan = n => L.dayText(n).slice(0, 5);
 const nhacText = r => (r.guess ? 'từ hạn thu ' : r.lan ? 'nhắc lần ' + r.lan + ' ' : 'gửi ') + ngayNgan(r.from) + ', ' + r.days + ' ngày';
 function nhacLaiPanel(rows) {
-  const names = list => list.map(r => fullName(r.item) + ' (' + nhacText(r) + ')').join(', ');
+  const names = list => el('div', { class: 'names' }, list.map(r => el('span', { class: r.onCycle ? 'name due' : 'name', title: nhacText(r) }, [fullName(r.item), el('small', { textContent: nhacText(r) })])));
+  const plain = list => el('div', { class: 'names' }, list.map(r => el('span', { class: r.onCycle ? 'name due' : 'name', textContent: r.item.eng || r.item.name })));
   const line = c => {
     const clear = c.list.filter(r => !r.blank), dated = c.list.filter(r => r.blank && !r.guess), old = c.list.filter(r => r.blank && r.guess);
     return el('div', { class: 'row card' }, [
       el('div', { class: 'r1' }, [el('span', { class: 'nm', textContent: c.data.tab }), el('span', { class: 'sub', textContent: 'Đợt ' + c.data.dot + ' · ' + c.list.length + ' em' })]),
-      clear.length ? el('div', { class: 'sub', style: 'margin-top:4px', textContent: 'Chưa nộp: ' + names(clear) + '.' }) : '',
-      dated.length ? el('div', { class: 'sub', style: 'margin-top:4px', textContent: 'Chưa ghi, xem sao kê trước: ' + names(dated) + '.' }) : '',
-      old.length ? el('div', { class: 'sub', style: 'margin-top:4px', textContent: 'Chưa ghi, xem sao kê trước (' + nhacText(old[0]) + '): ' + old.map(r => r.item.eng || r.item.name).join(', ') + '.' }) : '',
+      clear.length ? el('div', { class: 'sub group', textContent: 'Chưa nộp' }) : '', clear.length ? names(clear) : '',
+      dated.length ? el('div', { class: 'sub group', textContent: 'Chưa ghi, xem sao kê trước' }) : '', dated.length ? names(dated) : '',
+      old.length ? el('div', { class: 'sub group', textContent: 'Chưa ghi, xem sao kê trước (' + nhacText(old[0]) + ')' }) : '', old.length ? plain(old) : '',
       el('div', { class: 'r2' }, [el('div', { class: 'fill' }),
         clear.length ? el('button', { class: 'quiet', textContent: 'Đã nhắc lại ' + clear.length + ' em chưa nộp', onclick: () => {
           if (!confirm('Ghi đã nhắc lại ' + clear.length + ' em chưa nộp lớp ' + c.data.tab + ' hôm nay? Sau ' + L.REMIND_EVERY + ' ngày chưa nộp sẽ cảnh báo tiếp.')) return;
           logSent(c.data.tab, c.data.dot, clear.map(r => r.item), 'nhac-lai'); render(); } }) : '',
-        el('button', { class: 'act', textContent: 'Mở Gửi Zalo', onclick: () => { tab = 'zalo'; filter = 'can'; openClass(c.data.tab); loadSent(); } })])]);
+        el('button', { class: 'act', textContent: 'Thu tiền', onclick: () => { tab = 'thu'; filter = 'xem'; openClass(c.data.tab); } }),
+        el('button', { class: 'act', textContent: 'Gửi Zalo', onclick: () => { tab = 'zalo'; filter = 'can'; openClass(c.data.tab); loadSent(); } })])]);
   };
   const all = rows.reduce((n, c) => n + c.list.length, 0), blank = rows.reduce((n, c) => n + c.list.filter(r => r.blank).length, 0);
   return [el('h2', { class: 'section', id: 'nhacLai', textContent: 'Gửi đã ' + L.REMIND_AFTER + ' ngày, chưa thấy nộp (' + (all - blank) + ' chưa nộp, ' + blank + ' chưa ghi)' }),
-    el('p', { class: 'sub', style: 'margin-bottom:8px', textContent: 'Chưa nộp thì nhắc lại rồi bấm "Đã nhắc lại", ' + L.REMIND_EVERY + ' ngày sau chưa nộp app cảnh báo tiếp. Chưa ghi có thể đã nộp, xem sao kê rồi tick. "Từ hạn thu" là lớp đã tick từ trước nên không có ngày gửi.' }),
+    el('p', { class: 'sub', style: 'margin-bottom:8px', textContent: 'Tên tô màu là hôm nay đến lượt. Nhắc xong bấm "Đã nhắc lại", ' + L.REMIND_EVERY + ' ngày sau chưa nộp app cảnh báo tiếp. Chưa ghi có thể đã nộp, xem sao kê rồi tick.' }),
     el('div', { class: 'fee-list' }, rows.map(line))];
 }
 function nhacPanel(rows, due) {
   const line = r => el('div', { class: 'row card' }, [
     el('div', { class: 'r1' }, [el('span', { class: 'nm', textContent: r.x.tab }), el('span', { class: 'sub', textContent: 'Thu đợt ' + r.x.dot + (r.x.due ? ', hạn ' + r.x.due : '') })]),
-    el('div', { class: 'sub', style: 'margin-top:4px', textContent: !r.left ? 'Chưa tick đã gửi cả lớp.' : r.left.length + '/' + r.total + ' em chưa tick: ' + r.left.map(y => fullName(y) + (chuaGhi(y) ? ' (chưa ghi nộp)' : '')).join(', ') + '.' }),
+    !r.left ? el('div', { class: 'sub', style: 'margin-top:4px', textContent: 'Chưa tick đã gửi cả lớp.' }) : el('div', {}, [el('div', { class: 'sub group', textContent: r.left.length + '/' + r.total + ' em chưa tick' }),
+      el('div', { class: 'names' }, r.left.map(y => el('span', { class: 'name', textContent: fullName(y) + (chuaGhi(y) ? ' · chưa ghi nộp' : '') })))]),
     el('div', { class: 'r2' }, [el('div', { class: 'fill' }),
       el('button', { class: 'quiet', textContent: 'Đã gửi cả lớp', onclick: () => { if (confirm('Ghi đã gửi tin đợt ' + r.x.dot + ' cho cả lớp ' + r.x.tab + '?')) markClass(r.x.tab, r.x.dot, r.x.due, true); } }),
       el('button', { class: 'act', textContent: 'Mở Gửi Zalo', onclick: () => { tab = 'zalo'; filter = 'can'; openClass(r.x.tab); loadSent(); } })])]);
@@ -1093,19 +1159,29 @@ function renderDot(box) {
   const list = useSchedule ? L.scheduleLessons(prevEnd, cur.lessons.length || Number(cur.sessions) || 20, sched.sessions[cur.tab], sched.last, cur.lessons) : cur.lessons.map(day => ({ day, known: false }));
   const learned = list.filter(x => x.known && x.day <= today).length, learning = Number(cur.nextDot) - 1, first = list[0], last = list[list.length - 1];
   const differs = useSchedule && last && !isNaN(L.dayOf(cur.end)) && last.day !== L.dayOf(cur.end);
-  box.append(el('div', { class: 'card panel' }, [
-    el('h2', { class: 'panel-title', textContent: 'Đợt ' + learning + ' đang học' }),
-    el('div', { class: 'sub', textContent: (first && last ? L.dayText(first.day) + ' đến ' + L.dayText(last.day) + ' · ' : '') + 'đã học ' + learned + '/' + list.length + ' buổi' }),
-    el('div', { class: 'sub', textContent: 'Thu đợt ' + cur.nextDot + ': hạn ' + cur.dueDate + (cur.dueState ? ' · ' + cur.dueState : '') }),
-    differs ? el('div', { class: 'warn-line', textContent: 'Theo Schedule đợt này hết ' + L.dayText(last.day) + ', file học phí tính hết ' + cur.end + '. Hạn thu đang theo file.' }) : '',
-    el('ol', { class: 'lessons' }, list.map(x => el('li', { class: (x.day <= today ? 'past' : '') + (x.known ? '' : ' planned'), textContent: L.dayText(x.day).slice(0, 5) + ' ' + L.weekdays([x.day]) }))),
-    el('div', { class: 'sub', textContent: useSchedule ? 'Theo Schedule đến tuần ' + L.dayText(sched.last) + '. Chữ nghiêng là dự kiến.' : 'Đang đối chiếu Schedule, tạm hiện ngày dự kiến của file.' }),
-    off.length ? el('div', { class: 'sub', textContent: 'Schedule ghi nghỉ: ' + off.map(d => L.dayText(d).slice(0, 5)).join(', ') }) : '']));
-  box.append(bookPanel(), historyPanel(), sentPanel());
+  const next = list.find(x => x.day >= today), dueDay = L.dayOf(cur.dueDate), toDue = dueDay - today;
+  const fact = (label, big, small, extra) => el('div', { class: 'fact' }, [el('span', { class: 'lab', textContent: label }), el('b', { textContent: big }), small ? el('span', { class: 'sub', textContent: small }) : '', extra || '']);
+  box.append(el('div', { class: 'card facts' }, [
+    fact('Đang học', 'Đợt ' + learning, first && last ? L.dayText(first.day).slice(0, 5) + ' đến ' + L.dayText(last.day) : ''),
+    fact('Đã học', learned + '/' + list.length + ' buổi', 'Còn ' + Math.max(0, list.length - learned) + ' buổi', el('div', { class: 'track' }, [el('i', { style: 'width:' + (list.length ? Math.round(learned / list.length * 100) : 0) + '%' })])),
+    fact(next && next.day === today ? 'Hôm nay học' : 'Buổi tới', next ? L.dayText(next.day).slice(0, 5) : 'Hết đợt', next ? L.weekdays([next.day]) + (next.known ? '' : ', dự kiến') : ''),
+    fact('Thu đợt ' + cur.nextDot, isNaN(dueDay) ? (cur.dueDate || 'Chưa có') : L.dayText(dueDay), isNaN(dueDay) ? '' : toDue > 0 ? 'Còn ' + toDue + ' ngày' : toDue === 0 ? 'Hôm nay' : 'Quá ' + (-toDue) + ' ngày')]));
+  if (differs) box.append(el('div', { class: 'warn-line', style: 'margin:0 0 12px', textContent: 'Theo Schedule đợt này hết ' + L.dayText(last.day) + ', file học phí tính hết ' + cur.end + '. Hạn thu đang theo file.' }));
+  const left = el('div', { class: 'dot-col' }, [
+    el('div', { class: 'card panel' }, [
+      el('h2', { class: 'panel-title', textContent: 'Các buổi học đợt ' + learning }),
+      el('ol', { class: 'les' }, list.map((x, k) => el('li', { class: (x.day < today ? 'past' : x === next ? 'next' : '') + (x.known ? '' : ' planned') }, [
+        el('span', { class: 'no', textContent: String(k + 1) }), el('b', { textContent: L.dayText(x.day).slice(0, 5) }), el('span', { class: 'wd', textContent: L.weekdays([x.day]) })]))),
+      el('div', { class: 'legend' }, [el('span', { class: 'k past', textContent: 'Đã học' }), el('span', { class: 'k next', textContent: next && next.day === today ? 'Hôm nay' : 'Buổi tới' }), el('span', { class: 'k planned', textContent: 'Dự kiến, chưa có trên Schedule' })]),
+      useSchedule ? el('div', { class: 'sub', textContent: 'Schedule có đến tuần ' + L.dayText(sched.last) + '.' }) : el('div', { class: 'sub', textContent: 'Đang đối chiếu Schedule, tạm hiện ngày dự kiến của file.' }),
+      off.length ? el('div', { class: 'sub', textContent: 'Schedule ghi nghỉ: ' + off.map(d => L.dayText(d).slice(0, 5)).join(', ') }) : '']),
+    historyPanel()]);
+  const right = el('div', { class: 'dot-col' }, [bookPanel(), sentPanel()]);
   const mien = cur.items.filter(L.free);
-  if (mien.length) box.append(el('div', { class: 'card panel' }, [el('h2', { class: 'panel-title', textContent: 'Em miễn học phí' }),
-    el('div', { class: 'sub', textContent: 'Các em này không tính, không đếm, không gửi tin ở đâu cả. Đổi mức ở đây nếu không còn miễn.' }),
+  if (mien.length) right.append(el('div', { class: 'card panel' }, [el('h2', { class: 'panel-title', textContent: 'Em miễn học phí' }),
+    el('div', { class: 'sub', textContent: 'Không tính, không đếm, không gửi tin. Đổi mức ở đây nếu không còn miễn.' }),
     ...mien.map(it => el('div', { style: 'margin-top:8px' }, [el('b', { textContent: fullName(it) }), discLine(it)]))]));
+  box.append(el('div', { class: 'dot-grid' }, [left, right]));
 }
 function bookPanel() {
   const draft = bookDraft && bookDraft.tab === cur.tab ? bookDraft.list : cur.books.slice();
@@ -1141,25 +1217,36 @@ async function luuSach(list) {
 function historyPanel() {
   return el('div', { class: 'card panel' }, [el('h2', { class: 'panel-title', textContent: 'Các đợt đã thu' })].concat(
     cur.history.length ? cur.history.map(h => el('details', { class: 'hist' }, [
-      el('summary', {}, ['Thu đợt ' + h.dot + (h.paidOn ? ', ngày ' + h.paidOn : '') + ' · ' + h.total + ' đ']),
-      el('div', { class: 'sub', textContent: 'Đợt ' + (Number(h.dot) - 1) + ' học ' + h.from + ' đến ' + h.to + ' · học phí ' + h.fee + ' đ' + (h.book ? ' · ' + h.book : '') }),
+      el('summary', { class: 'hist-row' }, [el('b', { textContent: 'Đợt ' + h.dot }), el('span', { class: 'sub', textContent: h.paidOn ? 'Thu ' + h.paidOn : '' }), el('strong', { textContent: h.total + ' đ' })]),
+      el('dl', { class: 'kv' }, [
+        el('dt', { textContent: 'Thu cho' }), el('dd', { textContent: 'Đợt ' + h.dot + ', sau khi đợt ' + (Number(h.dot) - 1) + ' học ' + h.from + ' đến ' + h.to }),
+        el('dt', { textContent: 'Học phí' }), el('dd', { textContent: h.fee + ' đ' }),
+        h.book ? el('dt', { textContent: 'Sách' }) : '', h.book ? el('dd', { textContent: h.book }) : '']),
       h.detail ? el('pre', { class: 'detail', textContent: h.detail }) : ''])) : [el('div', { class: 'sub', textContent: 'Chưa có đợt nào được ghi.' })]));
 }
 function sentPanel() {
-  const rows = sentRows.filter(r => r[1] === cur.tab && String(r[2]) === String(cur.dot)).slice().reverse();
+  // One press often marks a whole group, so rows from the same moment read as one line.
+  const rows = sentRows.filter(r => r[1] === cur.tab && String(r[2]) === String(cur.dot)).slice().reverse(), groups = [];
+  rows.forEach(r => {
+    const last = groups[groups.length - 1], word = r[6] === 'bo' ? 'Bỏ đánh dấu' : r[6] === 'nhac-lai' ? 'Nhắc lại' : 'Đã gửi';
+    if (last && last.at === r[0] && last.by === r[7] && last.word === word) last.names.push(r);
+    else groups.push({ at: r[0], by: r[7], word, names: [r] });
+  });
   return el('div', { class: 'card panel' }, [el('h2', { class: 'panel-title', textContent: 'Lịch sử gửi Zalo đợt ' + cur.dot }),
-    rows.length ? el('ul', { class: 'log' }, rows.map(r => el('li', { textContent: r[0] + ' · ' + (r[7] || 'chưa rõ người') + ': ' + (r[6] === 'bo' ? 'bỏ đánh dấu ' : r[6] === 'nhac-lai' ? 'đã nhắc lại ' : 'đã gửi ') + r[3] + (r[4] ? ' (' + r[4] + ')' : '') })))
+    groups.length ? el('div', { class: 'sent-log' }, groups.map(g => el('div', { class: 'sent-row' }, [
+      el('div', { class: 'sub', textContent: g.at + (g.by ? ' · ' + g.by : '') }),
+      el('div', {}, [el('b', { textContent: g.word + ' ' }), g.names.map(r => r[4] || r[3]).join(', ')])])))
       : el('div', { class: 'sub', textContent: 'Chưa ai đánh dấu đã gửi.' })]);
 }
 
 function renderThu(box) {
-  const groups = { can: cur.items.filter(canThu), ghi: cur.items.filter(chuaGhi), da: cur.items.filter(daThu), hoan: cur.items.filter(x => L.deferred(x) && !L.free(x)), xem: cur.items.filter(x => canThu(x) && (x.warn || x.trong || x.gop || nhacOf(x))) };
-  if (filter === 'hoan' && !groups.hoan.length) filter = 'can';
+  const groups = { can: cur.items.filter(canThu), ghi: cur.items.filter(chuaGhi), da: cur.items.filter(daThu), hoan: cur.items.filter(x => L.deferred(x) && !L.free(x) && !daRoi(x)), roi: cur.items.filter(x => !x.paid && !L.free(x) && daRoi(x)), xem: cur.items.filter(x => canThu(x) && (x.warn || x.trong || x.gop || nhacOf(x))) };
+  if ((filter === 'hoan' && !groups.hoan.length) || (filter === 'roi' && !groups.roi.length)) filter = 'can';
   const chip = (id, label) => el('button', { textContent: label + ' ' + groups[id].length, 'aria-pressed': String(filter === id), onclick: () => { filter = id; render(); } });
   const before = cur.items.filter(x => x.prev && !L.free(x) && (x.prev.amount > 0 || x.prev.paid)).sort((a, b) => a.prev.paid - b.prev.paid);
   if (filter === 'truoc' && !before.length) filter = 'can';
   groups.truoc = before;
-  box.append(el('div', { class: 'filters' }, [chip('can', 'Chưa thu'), chip('ghi', 'Chưa ghi'), chip('xem', 'Cần xem lại'), chip('da', 'Đã nộp'), groups.hoan.length ? chip('hoan', 'Chưa thu ngay') : '',
+  box.append(el('div', { class: 'filters' }, [chip('can', 'Chưa thu'), chip('ghi', 'Chưa ghi'), chip('xem', 'Cần xem lại'), chip('da', 'Đã nộp'), groups.hoan.length ? chip('hoan', 'Chưa thu ngay') : '', groups.roi.length ? chip('roi', 'Đã nghỉ, chuyển') : '',
     before.length ? el('button', { textContent: 'Đợt ' + before[0].prev.dot + ' chưa nộp ' + before.filter(x => !x.prev.paid).length, 'aria-pressed': String(filter === 'truoc'), onclick: () => { filter = 'truoc'; render(); } }) : '']));
   const list = groups[filter];
   if (!list.length) { box.append(el('div', { class: 'empty', textContent: filter === 'can' ? 'Lớp này đã nộp đủ đợt ' + cur.dot + '.' : filter === 'da' ? 'Chưa có em nào nộp đợt ' + cur.dot + '.' : filter === 'ghi' ? 'Không có em nào chưa ghi.' : 'Không có em nào cần xem lại.' })); return; }
@@ -1207,17 +1294,19 @@ function discLine(it) {
 }
 function feeRow(it) {
   const d = el('input', { type: 'date', value: picked[it.key] || localDate(), max: localDate(), 'aria-label': 'Ngày nộp của ' + it.name, oninput: e => { picked[it.key] = e.target.value; } });
-  const r2 = L.free(it) ? [el('span', { class: 'chip idle', textContent: 'Miễn học phí, không thu' })] : it.paid
+  const gone = !it.paid && daRoi(it);
+  const r2 = gone ? [el('span', { class: 'chip idle', textContent: (gone.kind === 'Chuyển lớp' ? 'Chuyển sang ' + gone.to : 'Nghỉ học') + ' từ ' + gone.date })]
+    : L.free(it) ? [el('span', { class: 'chip idle', textContent: 'Miễn học phí, không thu' })] : it.paid
     ? [el('span', { class: 'chip ok', textContent: 'Đã nộp ' + it.date + (it.dangLuu ? ' · đang lưu' : '') }), el('div', { class: 'fill' }), el('button', { class: 'quiet', textContent: 'Bỏ tick', onclick: () => boTick(it) })]
     : [el('span', { class: /chưa thu ngay/i.test(it.status) || chuaGhi(it) ? 'chip idle' : 'chip', textContent: it.status || (chuaGhi(it) ? 'Chưa ghi' : 'Chưa nộp') }), el('div', { class: 'fill' }), d, el('button', { class: 'tick', textContent: 'Đã nộp', onclick: () => tick(it, d.value) })];
   const sent = !it.paid && sentOf(cur.tab, cur.dot, it.key);
   return el('div', { class: 'row card' }, [
-    el('div', { class: 'r1' }, [el('span', { class: 'nm', textContent: fullName(it) }), el('span', { class: 'amt', textContent: L.free(it) ? '' : money(it.amount) || (L.deferred(it) ? '' : 'Chưa có số') })]),
+    el('div', { class: 'r1' }, [el('span', { class: 'nm', textContent: fullName(it) }), el('span', { class: 'amt', textContent: L.free(it) || gone ? '' : money(it.amount) || (L.deferred(it) ? '' : 'Chưa có số') })]),
     el('div', { class: 'r2' }, r2),
     it.paid || !canThu(it) ? '' : el('div', { class: 'r3' }, sent
       ? [el('span', { class: 'sent', textContent: sentText(sent) }), (sentIdx[cur.tab + '|' + cur.dot] || {})[it.key] ? el('button', { class: 'quiet', textContent: 'Bỏ đánh dấu', onclick: () => markStudent(it, false) }) : '']
       : [el('button', { class: 'act', textContent: 'Đánh dấu đã gửi Zalo', onclick: () => markStudent(it, true) })]),
-    discLine(it),
+    gone ? el('div', { class: 'sub', style: 'margin-top:4px', textContent: 'Đã ghi ở Biến động, còn tên trong lớp đến khi Theo dõi toàn diện cập nhật. Không tính thu ở lớp này.' }) : discLine(it),
     nhacLine(it),
     it.gop && !it.paid ? el('div', { class: 'warn-line' }, ['Đã gộp đợt ' + it.gop.dot + ': ' + money(it.gop.amount) + (it.gop.blank ? ' vì đợt đó chưa ghi nộp hay chưa.' : ' vì đợt đó chưa nộp.'), el('button', { class: 'quiet', textContent: 'Đợt ' + it.gop.dot + ' đã nộp', onclick: () => tickPrev(it, d.value) })]) : '',
     prevDone[it.key] && it.prev && it.prev.paid && !it.paid ? el('div', { class: 'warn-line' }, ['Vừa ghi đợt ' + it.prev.dot + ' đã nộp ngày ' + it.prev.date + (it.prev.luu ? ' · đang lưu' : '') + '.', el('button', { class: 'quiet', textContent: 'Hoàn tác', onclick: () => boTickPrev(it) })]) : '',
