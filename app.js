@@ -755,7 +755,8 @@ async function loadMoves() {
   xemTheoTick();
 }
 /* ---------- The bill follows the newest paid tick in the class table ---------- */
-const tickOf = {};
+const tickErr = {};
+let tickBusy = false;
 async function docTick(it) {
   const q = L.quote(it.from), row = it.row;
   const [heads, table, hist, cfg] = await batchGet([q + '!F382:BM382', q + '!B384:BM413', q + '!J18:N36', q + '!B5:B6']);
@@ -767,34 +768,27 @@ async function docTick(it) {
   const status = L.tickStatus(hist, blocks, it.date);
   return { status, bill: L.tickBill({ kind: it.kind, name: it.name, eng: it.eng, from: it.from, cls: it.cls, date: it.date, used: it.used, fee: L.digits((cfg[1] || [])[0]), sessions: Number(L.digits((cfg[0] || [])[0])), msg: it.msg, bookFee: it.bookFee, bookList: it.bookList, discCell: (cell || [])[0], status }) };
 }
+/** The owner's rule: the ticks decide, so a bill that disagrees is corrected here without asking. Only a row that cannot be worked out is shown. */
 async function xemTheoTick() {
+  if (tickBusy) return;
+  tickBusy = true;
   const rows = moves ? moves.due.filter(it => it.tab === L.EXIT_TAB && !it.problem && it.from && it.msg) : [];
   for (const it of rows) {
-    try { tickOf[it.key] = await docTick(it); } catch (e) { tickOf[it.key] = { unknown: true }; }
+    try {
+      const t = await docTick(it);
+      tickErr[it.key] = t.bill && t.bill.error ? t.bill.error : '';
+      if (t.bill && !t.bill.error && t.bill.total !== it.amount) await ghiTick(it, t.bill);
+    } catch (e) { /* the row stays as the Sheet has it and is read again at the next load */ }
     if (view === 'moves') render();
   }
+  tickBusy = false;
 }
-function tickLine(it) {
-  const t = tickOf[it.key];
-  if (!t || !t.bill || (!t.bill.error && t.bill.total === it.amount)) return '';
-  const s = t.status, lan = s.last ? 'Tick nộp mới nhất là đợt ' + s.last.dot + (s.last.amount ? ' (' + s.last.amount + (s.last.date ? ', ngày ' + s.last.date : '') + ')' : '') : 'Chưa có lần tick nộp nào';
-  if (t.bill.error) return el('div', { class: 'warn-line' }, [lan + '. ' + t.bill.error]);
-  const msg = el('span', { class: 'sub', role: 'status' });
-  return el('div', { class: 'warn-line' }, [lan + ', đợt ' + s.dot + (s.covered ? ' đã đóng theo lần tick đó' : ' chưa tick') + ': số đúng là ' + L.fmt(t.bill.total) + ' đ, không phải ' + L.fmt(it.amount) + ' đ.',
-    el('details', { class: 'hist' }, [el('summary', { textContent: 'Xem tin nhắn mới' }), el('pre', { class: 'detail', textContent: t.bill.msg })]),
-    el('button', { class: 'primary', textContent: 'Tính lại theo tick', onclick: () => ghiTick(it, t.bill, msg) }), msg]);
-}
-async function ghiTick(it, bill, msg) {
-  if (!confirm('Ghi ' + fullName(it) + ': tổng ' + L.fmt(bill.total) + ' đ vào dòng ' + it.row + ' tab ' + it.tab + '?')) return;
-  msg.textContent = 'Đang lưu…';
-  const q = L.quote(it.tab);
-  try {
-    const [[name]] = await batchGet([q + '!B' + it.row]);
-    if (L.clean((name || [])[0]) !== L.clean(it.name)) throw new Error('Dòng ' + it.row + ' đã đổi học sinh, hãy tải lại.');
-    await batchWrite([['O', bill.tuition]].concat(bill.total > 0 ? [['M', bill.msg]] : []).map(([c, v]) => ({ range: q + '!' + c + it.row, values: [[v]] })));
-    delete tickOf[it.key]; await loadMoves();
-    notice('Đã tính lại ' + it.name + ': ' + L.fmt(bill.total) + ' đ.');
-  } catch (e) { msg.textContent = 'Không lưu được: ' + e.message; }
+async function ghiTick(it, bill) {
+  const q = L.quote(it.tab), [[name]] = await batchGet([q + '!B' + it.row]);
+  if (L.clean((name || [])[0]) !== L.clean(it.name)) return;
+  await batchWrite([['O', bill.tuition]].concat(bill.total > 0 ? [['M', bill.msg]] : []).map(([c, v]) => ({ range: q + '!' + c + it.row, values: [[v]] })));
+  it.amount = bill.total; it.msg = bill.msg; it.qr = String(it.qr).replace(/amount=\d+/, 'amount=' + bill.total);
+  if (!bill.total && moves) moves.due = moves.due.filter(x => x !== it);
 }
 function renderMoves(box) {
   box.append(el('div', { class: 'page-title' }, [
@@ -892,7 +886,7 @@ function dueRow(it) {
     it.problem ? el('div', { class: 'warn-line' }, ['Sheet chưa tính được số tiền (tab ' + it.tab + ', dòng ' + it.row + '): ' + (it.reason || 'bạn mở Sheet kiểm tra.'),
       it.kind === 'nghi' && !(tinh && tinh.key === it.key) ? el('button', { class: 'quiet', textContent: 'Tính theo Schedule', onclick: () => moTinh(it) }) : '']) : '',
     it.problem && tinh && tinh.key === it.key ? tinhPanel(it) : '',
-    it.problem ? '' : tickLine(it),
+    !it.problem && tickErr[it.key] ? el('div', { class: 'warn-line', textContent: 'Chưa tự tính được theo tick: ' + tickErr[it.key] }) : '',
     it.problem ? ''
       : el('div', { class: 'r2' }, [el('button', { textContent: 'Xem thiệp', disabled: !it.qr, onclick: () => moThiep(it) }),
         el('label', { class: 'ack', style: 'margin:0' }, [el('input', { type: 'checkbox', checked: !!dueMark(it), onchange: e => { logSent(dueCls(it), DUE_DOT, [it], e.target.checked ? 'da-gui' : 'bo'); render(); } }), dueMark(it) ? sentText(dueMark(it)) : 'Đã gửi tin']),
