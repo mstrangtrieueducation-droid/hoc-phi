@@ -299,6 +299,8 @@
   .tt-cols section, .tt-more { display: grid; gap: 6px; padding: 12px; border: 1px solid var(--line); border-radius: 12px; background: var(--card); }
   .tt-cols h3 { font-size: 14px; font-weight: 600; margin: 0; }
   .tt-forms { display: grid; gap: 12px; }
+  .tt-forms, .tt-cols section, .tt-more { grid-template-columns: minmax(0, 1fr); min-width: 0; }
+  .tt-cols > * { min-width: 0; }
   .tt-forms input, .tt-forms select, .tt-forms textarea { min-height: 40px; padding: 6px 8px; border: 1px solid var(--line); border-radius: 10px; background: var(--card); color: inherit; font: inherit; max-width: 100%; min-width: 0; }
   .tt-forms textarea { width: 100%; min-height: 180px; margin: 6px 0; }
   .tt-more summary { font-size: 14px; font-weight: 600; cursor: pointer; }
