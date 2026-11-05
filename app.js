@@ -160,10 +160,9 @@ function setCurrent(data, at, fresh) {
 }
 // The saved copy shows at once, so a click never waits on the Sheet; a copy older than FRESH_MS is replaced quietly when the read returns.
 const cuCu = c => c.data.items.length > 0 && !('disc' in c.data.items[0]);
-/** Phones start light, other screens follow the system, and a choice made here stays on this device. */
+/** Light on every screen unless someone picks dark on this device. */
 function applyTheme(choice) {
-  const phone = window.matchMedia('(max-width: 760px)').matches;
-  const dark = choice ? choice === 'dark' : !phone && window.matchMedia('(prefers-color-scheme: dark)').matches;
+  const dark = choice === 'dark';
   document.documentElement.dataset.theme = dark ? 'dark' : 'light';
   const b = $('btnTheme'); if (b) b.textContent = dark ? 'Nền sáng' : 'Nền tối';
 }
