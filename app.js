@@ -1158,7 +1158,7 @@ function renderHome(box) {
   if (sentDone.length) box.append(el('details', { class: 'hist' }, [el('summary', { textContent: 'Đã gửi tin (' + sentDone.length + ' lớp)' }), el('div', { class: 'classes' }, sentDone.map(calRow))]));
 }
 /* ---------- Tutor: its own file and page, counted from the Schedule ---------- */
-let tutor = null, tutorLoading = false, tutorMonth = '', tutorOpen = '', tutorFilter = '', tutorShown = [], tutorQueue = Promise.resolve();
+let tutor = null, tutorLoading = false, tutorMonth = '', tutorOpen = '', tutorFilter = '', tutorShown = [], tutorCopied = '', tutorQueue = Promise.resolve();
 async function loadTutor(force) {
   if (tutorLoading || (!force && tutor && !tutor.error && Date.now() - tutor.at < FRESH_MS)) return;
   tutorLoading = true; if (view === 'tutor') render();
@@ -1279,6 +1279,24 @@ function tutorRiengForm(it) {
     el('div', { class: 'tutor-line' }, [amt, el('button', { textContent: 'Lưu riêng', onclick: () => tutorLuu(it, { own: L.digits(amt.value), riengMsg: msg.value.trim() === it.msg.trim() ? it.riengMsg : msg.value.trim() }) }),
       it.own || it.riengMsg ? el('button', { class: 'quiet', textContent: 'Dùng lại tự động', onclick: () => tutorLuu(it, { own: 0, riengMsg: '' }) }) : ''])]);
 }
+/** Same steps as a class: copy the card, paste it in Zalo, then come back and say it went. */
+async function tutorCopy(it) {
+  const blob = thiep(it), done = () => { tutorCopied = it.key; notice('Đã copy thiệp của ' + it.name + ', sang Zalo dán rồi gửi.'); render(); };
+  try { await navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })]); return done(); } catch (e) {
+    try {
+      const f = new File([await blob], it.name + '.png', { type: 'image/png' });
+      if (navigator.canShare && navigator.canShare({ files: [f] })) { await navigator.share({ files: [f] }); return done(); }
+    } catch (e2) { /* falls through to the hint */ }
+    notice('Không copy được: nhấn giữ hoặc chuột phải vào ảnh thiệp để sao chép.', true);
+  }
+}
+function tutorCard(it) {
+  if (it.mien) return '';
+  if (!it.qr) return el('section', {}, [el('h3', { textContent: 'Thiệp và mã QR' }), el('div', { class: 'sub', textContent: it.trong ? 'Chọn giá xong sẽ có thiệp và mã QR.' : 'Chưa có số tiền nên chưa có thiệp và mã QR.' })]);
+  const img = el('img', { class: 'tt-card', alt: 'Thiệp học phí có mã QR của ' + it.name, onclick: () => moThiep(it) }), st = el('div', { class: 'sub', role: 'status', textContent: 'Đang tạo thiệp…' });
+  thiep(it).then(b => { img.src = URL.createObjectURL(b); st.textContent = it.finished ? 'Bấm vào ảnh để xem to.' : 'Tạm tính đến hôm nay, tháng học xong số có thể đổi.'; }).catch(e => { st.textContent = 'Không tạo được thiệp: ' + e.message; });
+  return el('section', {}, [el('h3', { textContent: 'Thiệp và mã QR' }), st, img]);
+}
 /** What can be done with this bill now, biggest step first. */
 function tutorActions(it, nhac) {
   const today = L.dayNow(new Date()), acts = [];
@@ -1286,8 +1304,10 @@ function tutorActions(it, nhac) {
   if (!it.finished) return [el('span', { class: 'sub', textContent: 'Tháng này chưa xong, thu ngày ' + L.dayText(L.billDay(it.month)) + '.' })];
   if (it.paid) return [el('span', { class: 'sent', textContent: 'Đã nộp ' + it.paid }), el('button', { class: 'quiet', textContent: 'Hoàn tác', onclick: () => tutorLuu(it, { paid: '' }) })];
   const date = el('input', { type: 'date', 'aria-label': 'Ngày nộp', value: new Date(today * 86400000).toISOString().slice(0, 10) });
-  if (it.qr) acts.push(el('button', { class: it.sentAt ? '' : 'primary', textContent: 'Xem thiệp', onclick: () => moThiep(it) }), el('button', { textContent: 'Copy chữ', onclick: () => navigator.clipboard.writeText(it.msg + '\n\nMã QR chuyển khoản: ' + it.qr).then(() => notice('Đã copy tin của ' + it.name + '.'), () => notice('Không copy được.', true)) }));
-  if (!it.sentAt) acts.push(el('button', { class: 'act', textContent: 'Đánh dấu đã gửi', onclick: () => { if (tutorFilter === 'gui') tutorTiep(it); tutorLuu(it, { sentAt: L.dayText(today), by: who }); } }));
+  const copied = tutorCopied === it.key && !it.sentAt;
+  const markSent = () => { tutorCopied = ''; if (tutorFilter === 'gui') tutorTiep(it); tutorLuu(it, { sentAt: L.dayText(today), by: who }); };
+  if (it.qr) acts.push(el('button', { class: it.sentAt ? '' : 'primary', textContent: copied ? (tutorFilter === 'gui' ? 'Đã gửi, sang em tiếp' : 'Đã gửi') : 'Copy thiệp', onclick: () => copied ? markSent() : tutorCopy(it) }), copied ? el('button', { textContent: 'Copy lại', onclick: () => tutorCopy(it) }) : '', el('button', { textContent: 'Copy chữ và QR', onclick: () => navigator.clipboard.writeText(it.msg + '\n\nMã QR chuyển khoản: ' + it.qr).then(() => notice('Đã copy tin của ' + it.name + '.'), () => notice('Không copy được.', true)) }));
+  if (!it.sentAt) { if (!copied) acts.push(el('button', { class: 'act', textContent: 'Đánh dấu đã gửi', onclick: markSent })); }
   else if (nhac) acts.push(el('button', { class: 'act', textContent: 'Đã nhắc lại', onclick: () => { if (tutorFilter === 'nhac') tutorTiep(it); tutorLuu(it, { sentAt: L.dayText(today), lan: it.lan + 1, by: who }); } }));
   acts.push(el('span', { class: 'tt-pay' }, [date, el('button', { class: 'act', textContent: 'Đã nộp', onclick: () => { tutorTiep(it); tutorLuu(it, { paid: date.value.split('-').reverse().join('/') }); } })]));
   return acts;
@@ -1316,8 +1336,8 @@ function tutorRow(it, nhac) {
       acts.length ? el('div', { class: 'tt-acts' }, acts) : '',
       it.sentAt && !it.paid ? el('button', { class: 'quiet', textContent: 'Bỏ đánh dấu đã gửi', onclick: () => tutorLuu(it, { sentAt: '', by: '', lan: 0 }) }) : '',
       el('div', { class: 'tt-cols' }, [
-        el('section', {}, [el('h3', { textContent: 'Các buổi trong tháng' }), tutorDates(it)]),
-        el('div', { class: 'tt-forms' }, [tutorGiaForm(it), tutorSachForm(it), tutorRiengForm(it)])])]) : '']);
+        tutorCard(it) || el('section', {}, [el('h3', { textContent: 'Các buổi trong tháng' }), tutorDates(it)]),
+        el('div', { class: 'tt-forms' }, [it.mien ? '' : el('section', {}, [el('h3', { textContent: 'Các buổi trong tháng' }), tutorDates(it)]), tutorGiaForm(it), tutorSachForm(it), tutorRiengForm(it)])])]) : '']);
 }
 function renderTutor(box) {
   box.append(el('div', { class: 'page-title' }, [
