@@ -532,6 +532,7 @@ assert.strictEqual(L.free({ disc: 'miễn học phí'.normalize('NFD') }), true)
   assert.strictEqual(L.tutorName('TUTOR IELTS\nNAM KHÁNH'), 'NAM KHÁNH');
   assert.strictEqual(L.tutorName('TUTOR\nNAM KHÁNH IELTS'), 'NAM KHÁNH');
   assert.strictEqual(L.tutorName('TUTOR \nACHI KIDS 28'), 'ACHI KIDS 28');
+  assert.strictEqual(L.tutorName('TUTOR\nJERRY KIDS 8'), 'JERRY');
   assert.strictEqual(L.tutorMinutes('18:30 - 20.00'), 90); assert.strictEqual(L.tutorMinutes('19.00  - 20.30'), 90); assert.strictEqual(L.tutorMinutes('07.30 - 11.30'), 240); assert.strictEqual(L.tutorMinutes('x'), 0);
   assert.strictEqual(L.hoursText(690), '11 giờ 30 phút'); assert.strictEqual(L.hoursText(720), '12 giờ'); assert.strictEqual(L.hoursText(30), '30 phút');
   const rows = [['DAY', 'TIME', 'B', 'CLASS', 'TEACHER'], ['MONDAY\n05.10.2026', '19.00 - 21.00', '', 'TUTOR\nACHI KIDS 28', 'THUY TRANG'], ['', '17.30 - 19.00', '', 'KIDS 21', 'RUBY'],

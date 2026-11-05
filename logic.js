@@ -611,6 +611,8 @@
 
   /* ---------- Tutor: billed on the first of the next month, for the sessions the Schedule shows ---------- */
   const TUTOR_FROM = '2026-09', TUTOR_ACCOUNT = 'STK 0918041993 – MB Bank – Triệu Thị Vân Trang', TUTOR_MODES = ['buoi', 'gio', 'mien'];
+  // Two spellings in the Schedule for one student, confirmed by the owner.
+  const TUTOR_SAME = { 'JERRY KIDS 8': 'JERRY' };
   const monthOf = day => dayText(day).replace(/^\d+\/(\d+)\/(\d+)$/, '$2-$1');
   const monthText = m => m.slice(5) + '/' + m.slice(0, 4);
   const monthRange = m => { const y = +m.slice(0, 4), n = +m.slice(5); return { from: Date.UTC(y, n - 1, 1) / 86400000, to: Date.UTC(y, n, 0) / 86400000 }; };
@@ -621,7 +623,7 @@
     return out;
   }
   /** The Schedule's own rule for a tutor student's name: the words TUTOR and IELTS are not part of it. */
-  const tutorName = cls => String(cls === undefined || cls === null ? '' : cls).normalize('NFC').replace(/TUTOR|IELTS/gi, ' ').replace(/\s+/g, ' ').trim().toUpperCase();
+  const tutorName = cls => { const n = String(cls === undefined || cls === null ? '' : cls).normalize('NFC').replace(/TUTOR|IELTS/gi, ' ').replace(/\s+/g, ' ').trim().toUpperCase(); return TUTOR_SAME[n] || n; };
   function tutorMinutes(time) {
     const m = String(time || '').match(/^\s*(\d{1,2})[.:-](\d{2})\s*[-–]+\s*(\d{1,2})[.:-](\d{2})/);
     if (!m) return 0;

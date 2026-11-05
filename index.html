@@ -277,14 +277,50 @@
   .sent-row b { font-weight: 600; }
   /* Lists of names. */
   .group { margin-top: 8px; }
-  .tutor-edit { display: grid; gap: 10px; margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--line); }
-  .tutor-edit h3 { font-size: 14px; font-weight: 600; margin: 0 0 4px; }
-  .tutor-edit input, .tutor-edit select, .tutor-edit textarea { min-height: 40px; padding: 6px 8px; border: 1px solid var(--line); border-radius: 10px; background: var(--card); color: inherit; font: inherit; max-width: 100%; }
-  .tutor-edit textarea { width: 100%; min-height: 160px; }
+  .tt-list { overflow: hidden; }
+  .tt-head, .tt-row { display: grid; grid-template-columns: minmax(0, 2.2fr) minmax(0, 1.5fr) minmax(0, 1.1fr) minmax(0, 1fr) 104px 18px; gap: 10px; align-items: center; padding: 10px 14px; }
+  .tt-head { font-size: 13px; color: var(--muted); border-bottom: 1px solid var(--line); }
+  .tt-head .r, .tt-amt { text-align: right; }
+  .tt-item + .tt-item { border-top: 1px solid var(--line); }
+  .tt-row { width: 100%; min-height: 48px; border: 0; border-radius: 0; background: none; color: inherit; text-align: left; font-size: 14px; font-weight: 400; }
+  .tt-row:hover { background: var(--soft); }
+  .tt-name { font-weight: 600; overflow-wrap: anywhere; }
+  .tt-count, .tt-rate { color: var(--muted); }
+  .tt-amt { font-weight: 600; white-space: nowrap; }
+  .tt-arrow { color: var(--muted); text-align: right; }
+  .tt-item.open { background: var(--soft); }
+  .tt-body { display: grid; gap: 10px; padding: 2px 14px 14px; }
+  .tt-body .warn-line { margin: 0; }
+  .tt-body > .quiet { justify-self: start; }
+  .tt-acts { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+  .tt-pay { display: inline-flex; align-items: center; gap: 6px; }
+  .tt-pay input { min-height: 44px; padding: 6px 8px; border: 1px solid var(--line); border-radius: 10px; background: var(--card); color: inherit; }
+  .tt-cols { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 12px; align-items: start; }
+  .tt-cols section, .tt-more { display: grid; gap: 6px; padding: 12px; border: 1px solid var(--line); border-radius: 12px; background: var(--card); }
+  .tt-cols h3 { font-size: 14px; font-weight: 600; margin: 0; }
+  .tt-forms { display: grid; gap: 12px; }
+  .tt-forms input, .tt-forms select, .tt-forms textarea { min-height: 40px; padding: 6px 8px; border: 1px solid var(--line); border-radius: 10px; background: var(--card); color: inherit; font: inherit; max-width: 100%; min-width: 0; }
+  .tt-forms textarea { width: 100%; min-height: 180px; margin: 6px 0; }
+  .tt-more summary { font-size: 14px; font-weight: 600; cursor: pointer; }
   .tutor-line { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
-  .tutor-list { margin: 8px 0 0; padding-left: 22px; font-size: 14px; }
-  .tutor-list .off { color: var(--muted); text-decoration: line-through; }
-  .tutor-list .later { color: var(--muted); }
+  .tutor-line select { flex: 1 1 120px; }
+  .tutor-line input { flex: 1 1 100px; }
+  .tt-pick { min-height: 32px; padding: 2px 10px; border-radius: 16px; font-size: 13px; }
+  .tt-days { list-style: none; margin: 0; padding: 0; font-size: 14px; }
+  .tt-days li { display: grid; grid-template-columns: 22px 104px 96px minmax(0, 1fr); gap: 6px; padding: 5px 0; border-top: 1px solid var(--line); }
+  .tt-days li:first-child { border-top: 0; }
+  .tt-days .no { color: var(--muted); }
+  .tt-days .off, .tt-days .later { color: var(--muted); }
+  .tt-months { margin-bottom: 10px; }
+  @media (max-width: 720px) {
+    .tt-head { display: none; }
+    .tt-row { grid-template-columns: minmax(0, 1fr) auto 14px; grid-template-areas: "name amt arrow" "count st arrow" "rate st arrow"; gap: 2px 10px; padding: 10px 12px; }
+    .tt-name { grid-area: name; } .tt-amt { grid-area: amt; } .tt-count { grid-area: count; font-size: 13px; } .tt-rate { grid-area: rate; font-size: 13px; } .tt-st { grid-area: st; justify-self: end; } .tt-arrow { grid-area: arrow; }
+    .tt-cols { grid-template-columns: minmax(0, 1fr); }
+    .tt-body { padding: 2px 12px 12px; }
+    .tt-days li { grid-template-columns: 20px 92px minmax(0, 1fr); }
+    .tt-days li > :last-child { grid-column: 2 / -1; font-size: 13px; }
+  }
   .names { display: flex; flex-wrap: wrap; gap: 4px 6px; margin-top: 4px; }
   .name { padding: 2px 10px; border-radius: 12px; background: var(--soft); font-size: 13px; }
   .name small { margin-left: 6px; color: var(--muted); font-size: 12px; }

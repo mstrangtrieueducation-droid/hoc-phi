@@ -1158,7 +1158,7 @@ function renderHome(box) {
   if (sentDone.length) box.append(el('details', { class: 'hist' }, [el('summary', { textContent: 'Đã gửi tin (' + sentDone.length + ' lớp)' }), el('div', { class: 'classes' }, sentDone.map(calRow))]));
 }
 /* ---------- Tutor: its own file and page, counted from the Schedule ---------- */
-let tutor = null, tutorLoading = false, tutorMonth = '', tutorOpen = '', tutorQueue = Promise.resolve();
+let tutor = null, tutorLoading = false, tutorMonth = '', tutorOpen = '', tutorFilter = '', tutorShown = [], tutorQueue = Promise.resolve();
 async function loadTutor(force) {
   if (tutorLoading || (!force && tutor && !tutor.error && Date.now() - tutor.at < FRESH_MS)) return;
   tutorLoading = true; if (view === 'tutor') render();
@@ -1224,101 +1224,134 @@ function tutorRateText(it) {
   return !r ? 'Chưa chọn giá' : r.mode === 'mien' ? 'Miễn phí' : L.fmt(r.price) + ' đ/' + (r.mode === 'gio' ? 'giờ' : 'buổi');
 }
 function tutorDates(it) {
-  const li = (s, cls, tail) => el('li', { class: cls, textContent: L.dayShort(s.day) + ' · ' + (s.time || 'chưa có giờ') + (s.teacher ? ' · ' + s.teacher : '') + tail });
-  const rows = it.list.map(s => s.off ? li(s, 'off', ' · nghỉ') : it.later.includes(s) ? li(s, 'later', ' · sắp học') : it.bad.includes(s) ? li(s, '', ' · thiếu giờ hoặc giáo viên, chưa tính') : li(s, '', ''));
-  return el('details', { style: 'margin-top:8px' }, [el('summary', { class: 'sub', textContent: 'Xem ' + it.list.length + ' dòng buổi học trong Schedule' }), el('ol', { class: 'tutor-list' }, rows)]);
+  if (!it.list.length) return el('div', { class: 'sub', textContent: 'Schedule không có buổi nào trong tháng này.' });
+  let no = 0;
+  return el('ul', { class: 'tt-days' }, it.list.map(s => {
+    const later = it.later.includes(s), bad = it.bad.includes(s), counted = !s.off && !later && !bad;
+    return el('li', { class: s.off ? 'off' : later ? 'later' : '' }, [
+      el('span', { class: 'no', textContent: counted ? String(++no) : '' }),
+      el('span', { textContent: L.dayShort(s.day) }), el('span', { textContent: s.time || 'chưa có giờ' }),
+      el('span', { class: 'sub', textContent: s.off ? 'Nghỉ, không tính' : later ? 'Sắp học' : bad ? 'Thiếu giờ hoặc giáo viên, chưa tính' : s.teacher })]);
+  }));
 }
-function tutorEdit(it) {
+/** The next row in the list on screen, so a run of students can be done without going back to the list. */
+function tutorTiep(it) {
+  const k = tutorShown.indexOf(it.key);
+  tutorOpen = tutorShown[k + 1] || tutorShown[k - 1] || '';
+}
+function tutorGiaForm(it) {
   const mode = el('select', { 'aria-label': 'Cách tính tiền' }, [['buoi', 'Theo buổi'], ['gio', 'Theo giờ'], ['mien', 'Miễn phí']].map(([v, t]) => el('option', { value: v, textContent: t })));
   mode.value = it.rate ? it.rate.mode : 'buoi';
-  const price = el('input', { inputmode: 'numeric', placeholder: 'Số tiền, ví dụ 300000', 'aria-label': 'Đơn giá', value: it.rate && it.rate.price ? String(it.rate.price) : '' });
-  const used = el('span', { class: 'tutor-line' });
+  const luu = () => {
+    const v = L.digits(price.value);
+    if (mode.value !== 'mien' && !v) return notice('Hãy nhập số tiền, hoặc chọn Miễn phí.', true);
+    notice('');
+    if (tutorFilter === 'gia') tutorTiep(it);
+    tutorLuuGia(it.name, it.month, mode.value, v);
+  };
+  const price = el('input', { id: 'ttGia', inputmode: 'numeric', placeholder: 'Số tiền', 'aria-label': 'Đơn giá', value: it.rate && it.rate.price ? String(it.rate.price) : '', onkeydown: e => { if (e.key === 'Enter') luu(); } });
+  const used = el('div', { class: 'tutor-line' });
   const fillUsed = () => {
     const count = {};
     tutor.gia.forEach(r => { if (r[2] === mode.value && L.digits(r[3])) count[L.digits(r[3])] = (count[L.digits(r[3])] || 0) + 1; });
-    used.replaceChildren(...Object.keys(count).sort((a, b) => count[b] - count[a]).slice(0, 6).map(p => el('button', { class: 'quiet', textContent: L.fmt(p), onclick: () => { price.value = p; } })));
+    used.replaceChildren(...Object.keys(count).sort((x, y) => count[y] - count[x]).slice(0, 6).map(p => el('button', { class: 'tt-pick', textContent: L.fmt(p), onclick: () => { price.value = p; luu(); } })));
     price.hidden = mode.value === 'mien'; used.hidden = mode.value === 'mien';
   };
   mode.addEventListener('change', fillUsed); fillUsed();
-  const luuGia = () => {
-    const v = L.digits(price.value);
-    if (mode.value !== 'mien' && !v) return notice('Hãy nhập số tiền, hoặc chọn Miễn phí.', true);
-    notice(''); tutorLuuGia(it.name, it.month, mode.value, v);
-  };
-  const bookPick = el('select', { 'aria-label': 'Chọn sách' }, [el('option', { value: '', textContent: bookList ? 'Chọn sách…' : 'Đang đọc danh mục sách…' })].concat((bookList || []).map(b => el('option', { value: b.name, textContent: b.name + ' · ' + L.fmt(b.price) }))));
-  const bookPrice = el('input', { inputmode: 'numeric', placeholder: 'Giá sách', 'aria-label': 'Giá sách', style: 'width:110px' });
-  bookPick.addEventListener('change', () => { const b = (bookList || []).find(x => x.name === bookPick.value); bookPrice.value = b ? String(b.price) : ''; });
+  return el('section', {}, [el('h3', { textContent: 'Giá' }), el('div', { class: 'tutor-line' }, [mode, price, el('button', { class: 'primary', textContent: 'Lưu giá', onclick: luu })]), used,
+    el('div', { class: 'sub', textContent: 'Áp dụng từ tháng ' + L.monthText(it.month) + ' trở đi.' })]);
+}
+function tutorSachForm(it) {
+  const pick = el('select', { 'aria-label': 'Chọn sách' }, [el('option', { value: '', textContent: bookList ? 'Chọn sách…' : 'Đang đọc danh mục…' })].concat((bookList || []).map(b => el('option', { value: b.name, textContent: b.name + ' · ' + L.fmt(b.price) }))));
+  const price = el('input', { inputmode: 'numeric', placeholder: 'Giá', 'aria-label': 'Giá sách', style: 'width:100px' });
+  pick.addEventListener('change', () => { const b = (bookList || []).find(x => x.name === pick.value); price.value = b ? String(b.price) : ''; });
+  return el('section', {}, [el('h3', { textContent: 'Sách' }),
+    it.book.length ? el('div', { class: 'names' }, it.book.map((b, k) => el('span', { class: 'chip idle' }, [b.name + ' · ' + L.fmt(b.price) + ' ', el('button', { class: 'quiet', style: 'min-height:24px;padding:0 4px', 'aria-label': 'Bỏ ' + b.name, textContent: '×', onclick: () => tutorLuu(it, { book: it.book.filter((x, n) => n !== k) }) })]))) : '',
+    el('div', { class: 'tutor-line' }, [pick, price, el('button', { textContent: 'Thêm', onclick: () => {
+      if (!pick.value || !L.digits(price.value)) return notice('Hãy chọn sách và giá.', true);
+      notice(''); tutorLuu(it, { book: it.book.concat({ name: pick.value, price: L.digits(price.value) }) });
+    } })])]);
+}
+function tutorRiengForm(it) {
   const amt = el('input', { inputmode: 'numeric', placeholder: 'Để trống là tự tính', 'aria-label': 'Số tiền riêng', value: it.own ? String(it.own) : '' });
   const msg = el('textarea', { 'aria-label': 'Tin nhắn riêng', value: it.msg });
-  return el('div', { class: 'tutor-edit' }, [
-    el('div', {}, [el('h3', { textContent: 'Giá' }), el('div', { class: 'tutor-line' }, [mode, price, el('button', { class: 'act', textContent: 'Lưu giá', onclick: luuGia })]), used,
-      el('div', { class: 'sub', style: 'margin-top:4px', textContent: 'Áp dụng từ tháng ' + L.monthText(it.month) + ' trở đi. Tháng trước và tháng đã gửi tin vẫn giữ số cũ.' })]),
-    el('div', {}, [el('h3', { textContent: 'Sách' }),
-      it.book.length ? el('div', { class: 'names' }, it.book.map((b, k) => el('span', { class: 'chip idle' }, [b.name + ' · ' + L.fmt(b.price) + ' ', el('button', { class: 'quiet', style: 'min-height:24px;padding:0 4px', 'aria-label': 'Bỏ ' + b.name, textContent: '×', onclick: () => tutorLuu(it, { book: it.book.filter((x, n) => n !== k) }) })]))) : '',
-      el('div', { class: 'tutor-line', style: 'margin-top:4px' }, [bookPick, bookPrice, el('button', { class: 'act', textContent: 'Thêm sách', onclick: () => {
-        if (!bookPick.value || !L.digits(bookPrice.value)) return notice('Hãy chọn sách và giá.', true);
-        notice(''); tutorLuu(it, { book: it.book.concat({ name: bookPick.value, price: L.digits(bookPrice.value) }) });
-      } })])]),
-    el('div', {}, [el('h3', { textContent: 'Sửa riêng' }), msg, el('div', { class: 'tutor-line', style: 'margin-top:4px' }, [amt,
-      el('button', { class: 'act', textContent: 'Lưu riêng', onclick: () => tutorLuu(it, { own: L.digits(amt.value), riengMsg: msg.value.trim() === it.msg.trim() ? it.riengMsg : msg.value.trim() }) }),
-      it.own || it.riengMsg ? el('button', { class: 'quiet', textContent: 'Dùng lại tự động', onclick: () => tutorLuu(it, { own: 0, riengMsg: '' }) }) : ''])])]);
+  return el('details', { class: 'tt-more', open: !!(it.own || it.riengMsg) }, [el('summary', { textContent: it.own || it.riengMsg ? 'Sửa riêng (đang dùng)' : 'Sửa riêng' }), msg,
+    el('div', { class: 'tutor-line' }, [amt, el('button', { textContent: 'Lưu riêng', onclick: () => tutorLuu(it, { own: L.digits(amt.value), riengMsg: msg.value.trim() === it.msg.trim() ? it.riengMsg : msg.value.trim() }) }),
+      it.own || it.riengMsg ? el('button', { class: 'quiet', textContent: 'Dùng lại tự động', onclick: () => tutorLuu(it, { own: 0, riengMsg: '' }) }) : ''])]);
+}
+/** What can be done with this bill now, biggest step first. */
+function tutorActions(it, nhac) {
+  const today = L.dayNow(new Date()), acts = [];
+  if (it.mien || it.trong) return acts;
+  if (!it.finished) return [el('span', { class: 'sub', textContent: 'Tháng này chưa xong, thu ngày ' + L.dayText(L.billDay(it.month)) + '.' })];
+  if (it.paid) return [el('span', { class: 'sent', textContent: 'Đã nộp ' + it.paid }), el('button', { class: 'quiet', textContent: 'Hoàn tác', onclick: () => tutorLuu(it, { paid: '' }) })];
+  const date = el('input', { type: 'date', 'aria-label': 'Ngày nộp', value: new Date(today * 86400000).toISOString().slice(0, 10) });
+  if (it.qr) acts.push(el('button', { class: it.sentAt ? '' : 'primary', textContent: 'Xem thiệp', onclick: () => moThiep(it) }), el('button', { textContent: 'Copy chữ', onclick: () => navigator.clipboard.writeText(it.msg + '\n\nMã QR chuyển khoản: ' + it.qr).then(() => notice('Đã copy tin của ' + it.name + '.'), () => notice('Không copy được.', true)) }));
+  if (!it.sentAt) acts.push(el('button', { class: 'act', textContent: 'Đánh dấu đã gửi', onclick: () => { if (tutorFilter === 'gui') tutorTiep(it); tutorLuu(it, { sentAt: L.dayText(today), by: who }); } }));
+  else if (nhac) acts.push(el('button', { class: 'act', textContent: 'Đã nhắc lại', onclick: () => { if (tutorFilter === 'nhac') tutorTiep(it); tutorLuu(it, { sentAt: L.dayText(today), lan: it.lan + 1, by: who }); } }));
+  acts.push(el('span', { class: 'tt-pay' }, [date, el('button', { class: 'act', textContent: 'Đã nộp', onclick: () => { tutorTiep(it); tutorLuu(it, { paid: date.value.split('-').reverse().join('/') }); } })]));
+  return acts;
+}
+function tutorStatus(it, nhac) {
+  if (it.mien) return el('span', { class: 'chip idle', textContent: 'Miễn phí' });
+  if (it.trong) return el('span', { class: 'chip', textContent: 'Chưa có giá' });
+  if (it.paid) return el('span', { class: 'chip ok', textContent: 'Nộp ' + it.paid.slice(0, 5) });
+  if (!it.finished) return el('span', { class: 'chip idle', textContent: 'Đang học' });
+  if (nhac) return el('span', { class: 'chip', textContent: 'Gửi ' + nhac.days + ' ngày' });
+  if (it.sentAt) return el('span', { class: 'chip warn-soft', textContent: 'Gửi ' + it.sentAt.slice(0, 5) });
+  return el('span', { class: 'chip', textContent: 'Chưa gửi' });
 }
 function tutorRow(it, nhac) {
-  const open = tutorOpen === it.key, today = L.dayNow(new Date()), acts = [];
-  const pickDate = el('input', { type: 'date', 'aria-label': 'Ngày nộp', value: new Date(today * 86400000).toISOString().slice(0, 10) });
-  const toText = v => v.split('-').reverse().join('/');
-  if (!it.mien && !it.trong && it.finished) {
-    if (it.paid) acts.push(el('span', { class: 'chip ok', textContent: 'Đã nộp ' + it.paid }), el('button', { class: 'quiet', textContent: 'Hoàn tác', onclick: () => tutorLuu(it, { paid: '' }) }));
-    else {
-      if (it.qr) acts.push(el('button', { textContent: 'Xem thiệp', onclick: () => moThiep(it) }), el('button', { class: 'quiet', textContent: 'Copy chữ', onclick: () => navigator.clipboard.writeText(it.msg + '\n\nMã QR chuyển khoản: ' + it.qr).then(() => notice('Đã copy tin của ' + it.name + '.'), () => notice('Không copy được.', true)) }));
-      if (it.sentAt) {
-        acts.push(el('span', { class: 'sent', textContent: 'Đã gửi ' + it.sentAt + (it.by ? ' · ' + it.by : '') + (it.lan ? ' · nhắc ' + it.lan + ' lần' : '') }), el('button', { class: 'quiet', textContent: 'Bỏ đánh dấu', onclick: () => tutorLuu(it, { sentAt: '', by: '', lan: 0 }) }));
-        if (nhac) acts.push(el('button', { class: 'act', textContent: 'Đã nhắc lại', onclick: () => tutorLuu(it, { sentAt: L.dayText(today), lan: it.lan + 1, by: who }) }));
-      } else acts.push(el('button', { class: 'act', textContent: 'Đánh dấu đã gửi', onclick: () => tutorLuu(it, { sentAt: L.dayText(today), by: who }) }));
-      acts.push(pickDate, el('button', { class: 'act', textContent: 'Đã nộp', onclick: () => tutorLuu(it, { paid: toText(pickDate.value) }) }));
-    }
-  } else if (!it.mien && !it.trong && !it.finished) acts.push(el('span', { class: 'chip idle', textContent: 'Thu ngày ' + L.dayText(L.billDay(it.month)) }));
-  acts.push(el('button', { class: it.trong ? 'act' : 'quiet', textContent: it.trong ? 'Chọn giá' : open ? 'Đóng' : 'Giá, sách, sửa riêng', onclick: () => { tutorOpen = open ? '' : it.key; render(); } }));
-  const facts = [it.count + ' buổi', L.hoursText(it.minutes), tutorRateText(it)].concat(it.bookSum ? 'Sách ' + L.fmt(it.bookSum) : [], it.later.length ? 'Sắp học ' + it.later.length : [], it.offs.length ? 'Nghỉ ' + it.offs.length : []).join(' · ');
-  return el('div', { class: 'card row' }, [
-    el('div', { class: 'r1' }, [el('div', { class: 'nm', textContent: it.name }), el('div', { class: 'amt', textContent: it.mien ? '' : money(it.amount) })]),
-    el('div', { class: 'sub', textContent: facts }),
-    it.changed ? el('div', { class: 'warn-line', textContent: 'Lúc ' + (it.paid ? 'thu' : 'gửi') + ' là ' + money(it.amount) + ' (' + it.snapCount + ' buổi), Schedule và giá hiện tính ra ' + money(it.total) + ' (' + it.count + ' buổi).' }) : '',
-    it.bad.length ? el('div', { class: 'warn-line', textContent: it.bad.length + ' buổi thiếu giờ hoặc giáo viên trong Schedule nên chưa tính.' }) : '',
-    nhac ? el('div', { class: 'warn-line', textContent: 'Gửi đã ' + nhac.days + ' ngày chưa thấy nộp, nên nhắc lại.' }) : '',
-    el('div', { class: 'r2' }, acts), tutorDates(it), open ? tutorEdit(it) : '']);
+  const open = tutorOpen === it.key, acts = open ? tutorActions(it, nhac) : [];
+  const buoi = it.count + ' buổi · ' + L.hoursText(it.minutes), gia = it.trong ? '' : tutorRateText(it);
+  return el('div', { class: 'tt-item' + (open ? ' open' : '') }, [
+    el('button', { class: 'tt-row', 'aria-expanded': String(open), onclick: () => { tutorOpen = open ? '' : it.key; render(); } }, [
+      el('span', { class: 'tt-name', textContent: it.name }), el('span', { class: 'tt-count', textContent: buoi }), el('span', { class: 'tt-rate', textContent: gia }),
+      el('span', { class: 'tt-amt', textContent: it.mien || it.trong ? '' : money(it.amount) }), el('span', { class: 'tt-st' }, [tutorStatus(it, nhac)]), el('span', { class: 'tt-arrow', 'aria-hidden': 'true', textContent: open ? '▴' : '▾' })]),
+    open ? el('div', { class: 'tt-body' }, [
+      it.changed ? el('div', { class: 'warn-line', textContent: 'Lúc ' + (it.paid ? 'thu' : 'gửi') + ' là ' + money(it.amount) + ' (' + it.snapCount + ' buổi), Schedule và giá hiện tính ra ' + money(it.total) + ' (' + it.count + ' buổi).' }) : '',
+      it.bad.length ? el('div', { class: 'warn-line', textContent: it.bad.length + ' buổi thiếu giờ hoặc giáo viên trong Schedule nên chưa tính.' }) : '',
+      nhac ? el('div', { class: 'warn-line', textContent: 'Gửi đã ' + nhac.days + ' ngày chưa thấy nộp, nên nhắc lại.' }) : '',
+      it.sentAt && !it.paid ? el('div', { class: 'sent', textContent: 'Đã gửi ' + it.sentAt + (it.by ? ', ' + it.by : '') + (it.lan ? ', nhắc ' + it.lan + ' lần' : '') + ' ' }, ) : '',
+      acts.length ? el('div', { class: 'tt-acts' }, acts) : '',
+      it.sentAt && !it.paid ? el('button', { class: 'quiet', textContent: 'Bỏ đánh dấu đã gửi', onclick: () => tutorLuu(it, { sentAt: '', by: '', lan: 0 }) }) : '',
+      el('div', { class: 'tt-cols' }, [
+        el('section', {}, [el('h3', { textContent: 'Các buổi trong tháng' }), tutorDates(it)]),
+        el('div', { class: 'tt-forms' }, [tutorGiaForm(it), tutorSachForm(it), tutorRiengForm(it)])])]) : '']);
 }
 function renderTutor(box) {
   box.append(el('div', { class: 'page-title' }, [
-    el('div', {}, [el('h1', { textContent: 'Tutor' }), el('div', { class: 'sub', textContent: 'Học xong tháng nào, thu ngày đầu tháng sau. Số buổi đọc từ Schedule.' })]),
+    el('div', {}, [el('h1', { textContent: 'Tutor' }), el('div', { class: 'sub', textContent: 'Học xong tháng nào, thu ngày đầu tháng sau.' })]),
     el('button', { class: 'act', textContent: tutorLoading ? 'Đang đọc Schedule…' : 'Cập nhật', disabled: tutorLoading, onclick: () => loadTutor(true) })]));
   if (!tutor) { box.append(el('div', { class: 'empty', textContent: 'Đang đọc các tuần trong Schedule…' })); return; }
   if (tutor.error) { box.append(el('div', { class: 'warn-line', textContent: tutor.error })); return; }
   const today = L.dayNow(new Date()), months = L.tutorMonths(today), done = months.filter(m => L.billDay(m) <= today);
   if (!months.includes(tutorMonth)) tutorMonth = done.length ? done[done.length - 1] : months[months.length - 1];
-  box.append(el('div', { class: 'filters' }, months.map(m => el('button', { textContent: 'Tháng ' + L.monthText(m), 'aria-pressed': String(m === tutorMonth), onclick: () => { tutorMonth = m; tutorOpen = ''; render(); } }))));
   const items = tutorMonthItems(tutorMonth), finished = L.billDay(tutorMonth) <= today, billed = items.filter(x => !x.mien && !x.trong);
-  const got = billed.filter(x => x.paid), due = billed.filter(tutorCanThu), noPrice = items.filter(x => x.trong && (x.count > 0 || !finished)), free = items.filter(x => x.mien), idle = items.filter(x => finished && !x.mien && !x.paid && !noPrice.includes(x) && !due.includes(x));
-  const sum = list => list.reduce((n, x) => n + x.amount, 0);
+  const got = billed.filter(x => x.paid), due = billed.filter(tutorCanThu), sum = list => list.reduce((n, x) => n + x.amount, 0);
+  const nhacs = {}; L.remindDue(due, tutorMarks(due), today, NaN).forEach(n => { nhacs[n.item.key] = n; });
+  box.append(el('div', { class: 'seg tt-months', style: 'grid-template-columns:repeat(' + months.length + ',1fr)' }, months.map(m => el('button', { textContent: 'Tháng ' + m.slice(5) + '/' + m.slice(2, 4), 'aria-pressed': String(m === tutorMonth), onclick: () => { tutorMonth = m; tutorOpen = ''; tutorFilter = ''; render(); } }))));
   box.append(el('div', { class: 'stats' }, [
-    stat(L.dayText(L.billDay(tutorMonth)), finished ? 'Ngày thu' : 'Ngày thu, tháng này chưa xong'),
+    stat(L.dayText(L.billDay(tutorMonth)), finished ? 'Ngày thu' : 'Ngày thu, tháng chưa xong'),
     stat(L.fmt(sum(got)) + ' đ', 'Đã thu · ' + got.length + ' em'),
     stat(L.fmt(sum(due)) + ' đ', (finished ? 'Còn phải thu · ' : 'Tạm tính · ') + due.length + ' em', finished && due.length > 0)]));
   const missing = L.tutorMissing(tutor.weeks, tutorMonth, today);
   if (missing.length) box.append(el('div', { class: 'warn-line', style: 'margin:0 0 12px', textContent: 'Schedule chưa có tuần cho ' + missing.length + ' ngày trong tháng, từ ' + L.dayText(missing[0]) + ' đến ' + L.dayText(missing[missing.length - 1]) + '. Số buổi có thể thiếu.' }));
-  const nhacs = {}; L.remindDue(due, tutorMarks(due), today, NaN).forEach(n => { nhacs[n.item.key] = n; });
-  const part = (title, list) => { if (list.length) box.append(el('h2', { class: 'section', textContent: title + ' (' + list.length + ')' }), ...list.map(x => tutorRow(x, nhacs[x.key]))); };
-  const fold = (title, list) => { if (list.length) box.append(el('details', { class: 'hist' }, [el('summary', { textContent: title + ' (' + list.length + ')' })].concat(list.map(x => tutorRow(x))))); };
-  part('Chưa chọn giá', noPrice);
-  if (finished) {
-    part('Gửi lâu chưa thấy nộp', due.filter(x => nhacs[x.key]));
-    part('Chưa gửi Zalo', due.filter(x => !x.sentAt));
-    part('Đã gửi, chờ nộp', due.filter(x => x.sentAt && !nhacs[x.key]));
-    fold('Đã nộp', got);
-  } else part('Đang học', billed);
-  fold('Tháng này không có buổi nào', idle);
-  fold('Miễn phí, không tính', free);
-  if (!items.length) box.append(el('div', { class: 'empty', textContent: 'Schedule không có buổi tutor nào trong tháng này.' }));
+  const noPrice = items.filter(x => x.trong && (x.count > 0 || !finished)), free = items.filter(x => x.mien);
+  const groups = (finished ? [
+    ['gia', 'Chưa có giá', noPrice], ['nhac', 'Cần nhắc', due.filter(x => nhacs[x.key])], ['gui', 'Chưa gửi', due.filter(x => !x.sentAt)], ['cho', 'Chờ nộp', due.filter(x => x.sentAt && !nhacs[x.key])], ['nop', 'Đã nộp', got],
+    ['mien', 'Miễn phí', free], ['khong', 'Không có buổi', items.filter(x => !x.mien && !x.paid && !noPrice.includes(x) && !due.includes(x))]
+  ] : [['gia', 'Chưa có giá', noPrice], ['hoc', 'Đang học', billed], ['mien', 'Miễn phí', free]]).filter(g => g[2].length);
+  if (!groups.length) { box.append(el('div', { class: 'empty', textContent: 'Schedule không có buổi tutor nào trong tháng này.' })); return; }
+  if (!groups.some(g => g[0] === tutorFilter)) tutorFilter = groups[0][0];
+  const list = groups.find(g => g[0] === tutorFilter)[2];
+  tutorShown = list.map(x => x.key);
+  box.append(el('div', { class: 'filters' }, groups.map(g => el('button', { textContent: g[1] + ' ' + g[2].length, 'aria-pressed': String(g[0] === tutorFilter), onclick: () => { tutorFilter = g[0]; tutorOpen = ''; render(); } }))));
+  box.append(el('div', { class: 'card tt-list' }, [
+    el('div', { class: 'tt-head', 'aria-hidden': 'true' }, [el('span', { textContent: 'Học sinh' }), el('span', { textContent: 'Đã học' }), el('span', { textContent: 'Giá' }), el('span', { class: 'r', textContent: 'Số tiền' }), el('span', { textContent: 'Trạng thái' }), el('span')])
+  ].concat(list.map(x => tutorRow(x, nhacs[x.key])))));
+  // Typing the price straight away is the common case; keep the open row in view after the list changes.
+  setTimeout(() => { const o = document.querySelector('.tt-item.open'); if (!o) return; o.scrollIntoView({ block: 'nearest' }); const p = $('ttGia'); if (p && tutorFilter === 'gia' && !p.hidden) p.focus(); }, 0);
 }
 let lopFilter = 'all';
 function renderLop(box) {
