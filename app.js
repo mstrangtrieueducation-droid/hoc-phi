@@ -87,7 +87,7 @@ function renewOnClick(e) {
   const left = tokenUntil - Date.now(), on = e.target && e.target.closest ? e.target : document.body;
   if (linkKey || !tokenClient || renewing || $('app').hidden || left > RENEW_BEFORE || on.closest('#btnOut')) return;
   // Copying a card needs this page to keep focus, so that click leaves it to the next one unless time is already up.
-  if (left > 0 && on.closest('#one, #thiepCopy, .copy')) return;
+  if (left > 0 && on.closest('#one, #thiepCopy, #thiepChu, .copy')) return;
   renewing = true; askToken();
 }
 async function api(path, options, attempts) {
@@ -744,7 +744,7 @@ async function loadMoves() {
     bookList = readBookList(bookRows);
     roiMap = L.recentExits(exits, L.dayNow(new Date())); store.set('hp_roi', roiMap);
     moves = {
-      exits,
+      exits, news,
       list: L.classifyMoves(events, news.map(r => [r[1], r[2], r[3]]), exits.map(r => [r[1], r[2], r[5], r[6], r[23]]), Date.now()),
       due: L.intakeDue(news, exits), at: Date.now()
     };
@@ -758,9 +758,9 @@ function renderMoves(box) {
       el('div', { class: 'sub', textContent: movesLoading ? 'Đang đọc, file có thể đang bận nên có thể mất vài phút…' : moves ? 'Số mới lúc ' + new Date(moves.at).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' }) : '' })]),
     el('button', { textContent: 'Tải lại', disabled: movesLoading, onclick: loadMoves })]));
   if (!moves) { box.append(el('div', { class: 'empty', textContent: movesLoading ? 'Đang đọc, xin đợi…' : 'Chưa đọc được. Bấm Tải lại để thử lại.' })); return; }
-  box.append(el('div', { class: 'card panel add-move' }, [el('div', {}, [el('b', { textContent: 'Có em nghỉ hoặc chuyển lớp?' }),
-    el('div', { class: 'sub', textContent: 'Chọn trực tiếp ở đây, không cần chờ Theo dõi toàn diện. Khi toàn diện cập nhật sau, app biết là cùng một việc và không hỏi lại.' })]),
-    el('button', { class: 'primary', textContent: 'Thêm nghỉ / chuyển lớp', onclick: moThem })]));
+  box.append(el('div', { class: 'card panel add-move' }, [el('div', {}, [el('b', { textContent: 'Có em mới, em nghỉ hoặc chuyển lớp?' }),
+    el('div', { class: 'sub', textContent: 'Thêm trực tiếp ở đây, không cần chờ Theo dõi toàn diện. Khi toàn diện cập nhật sau, app biết là cùng một việc và không hỏi lại.' })]),
+    el('div', { class: 'add-btns' }, [el('button', { class: 'primary', textContent: 'Thêm học sinh mới', onclick: moThemMoi }), el('button', { textContent: 'Thêm nghỉ / chuyển lớp', onclick: moThem })])]));
   const ready = moves.list.filter(m => !m.wait), waiting = moves.list.filter(m => m.wait);
   box.append(el('h2', { class: 'section', textContent: 'Cần duyệt (' + ready.length + ')' }));
   box.append(ready.length ? el('div', { class: 'fee-list' }, ready.map(moveRow)) : el('div', { class: 'empty small', textContent: 'Không có thay đổi nào cần duyệt.' }));
@@ -859,8 +859,14 @@ function moThiep(it) {
   $('thiepDlg').dataset.key = it.key; $('thiepDlg').showModal();
   thiep(it).then(b => { img.src = URL.createObjectURL(b); }).catch(e => { $('thiepSt').textContent = 'Không tạo được thiệp: ' + e.message; });
 }
+const thiepDangMo = () => { const key = $('thiepDlg').dataset.key; return (moves && moves.due.find(x => x.key === key)) || (tutor && !tutor.error && tutorMonthItems(key.split('|')[1] || '').find(x => x.key === key)); };
+async function copyChuThiep() {
+  const it = thiepDangMo(); if (!it) return;
+  try { await navigator.clipboard.writeText(it.msg + (it.qr ? '\n\nMã QR chuyển khoản: ' + it.qr : '')); $('thiepSt').textContent = 'Đã copy chữ, sang Zalo dán rồi gửi.'; }
+  catch (e) { $('thiepSt').textContent = 'Không copy được chữ.'; }
+}
 async function copyThiep() {
-  const key = $('thiepDlg').dataset.key, it = (moves && moves.due.find(x => x.key === key)) || (tutor && !tutor.error && tutorMonthItems(key.split('|')[1] || '').find(x => x.key === key)); if (!it) return;
+  const it = thiepDangMo(); if (!it) return;
   try { await navigator.clipboard.write([new ClipboardItem({ 'image/png': thiep(it) })]); $('thiepSt').textContent = 'Đã copy thiệp, sang Zalo dán rồi gửi.'; }
   catch (e) { $('thiepSt').textContent = 'Không copy được: nhấn giữ hoặc chuột phải vào ảnh để sao chép.'; }
 }
@@ -877,6 +883,28 @@ async function tickDue(it, iso) {
     await loadMoves();
     notice('Đã lưu ' + it.name + '.');
   } catch (e) { notice('Không lưu được: ' + e.message, true); }
+}
+/** A new student the roster does not have yet: class, names, then the approval dialog's date, books and discount. */
+function moThemMoi() {
+  const m = { manual: true, id: 'tay', kind: 'moi', name: '', eng: '', from: '', to: '', row: 0, at: Date.now(), blocks: null, rows: [] };
+  const lop = el('select', { id: 'dvDen', 'aria-label': 'Lớp', onchange: e => { m.to = e.target.value; veDuyet(m); } }, [el('option', { value: '', textContent: 'Chọn lớp' })].concat(classes.map(n => el('option', { value: n, textContent: n }))));
+  const ten = el('input', { id: 'dvTenTay', placeholder: 'Họ tên tiếng Việt', 'aria-label': 'Họ tên', oninput: e => { m.name = e.target.value.trim().replace(/\s+/g, ' ').normalize('NFC').toUpperCase(); veDuyet(m); } });
+  const eng = el('input', { id: 'dvEngTay', placeholder: 'Tên tiếng Anh (nếu có)', 'aria-label': 'Tên tiếng Anh', oninput: e => { m.eng = e.target.value.trim(); veDuyet(m); } });
+  $('dvChon').replaceChildren(el('label', { textContent: 'Lớp' }), lop, el('label', { textContent: 'Học sinh' }), ten, eng);
+  $('dvChon').hidden = false;
+  moDuyet(m);
+}
+/** The Sheet works out the bill after the row is written, so the card opens once the row is ready. */
+async function moThiepMoi(m) {
+  const wait = ms => new Promise(ok => setTimeout(ok, ms));
+  for (let k = 0; k < 5; k++) {
+    if (k) await wait(15000);
+    await loadMoves();
+    const it = moves && moves.due.find(x => x.tab === L.NEW_TAB && x.cls === m.to && L.clean(x.name) === L.clean(m.name));
+    if (it && it.problem) return notice('Đã thêm ' + m.name + ' nhưng Sheet chưa tính được tiền: ' + (it.reason || 'bạn xem ở mục Cần thu.'), true);
+    if (it && it.qr) { notice('Đã thêm ' + m.name + '. Khi kịp, nhớ cập nhật Theo dõi toàn diện.'); if (view === 'moves') moThiep(it); return; }
+  }
+  notice('Đã thêm ' + m.name + '. Sheet chưa tính xong tiền, đợi 1–2 phút rồi bấm Tải lại, thiệp sẽ ở mục Cần thu. Khi kịp, nhớ cập nhật Theo dõi toàn diện.');
 }
 /** A leaver or transfer chosen by hand: the same dialog as an approval, with the student picked here. */
 function moThem() {
@@ -922,14 +950,14 @@ function moDuyet(m) {
 }
 /** Everything in the dialog that follows from who and where, drawn again whenever a hand-picked move changes. */
 function veDuyet(m) {
-  const cls = m.kind === 'nghi' ? m.from : m.to, ready = !!m.name && !!m.from && (m.kind !== 'chuyen' || !!m.to) || !m.manual;
-  $('dvTen').textContent = m.manual ? (m.name ? KIND[m.kind] + ': ' + fullName(m) : 'Thêm nghỉ hoặc chuyển lớp') : KIND[m.kind] + ': ' + fullName(m);
+  const cls = m.kind === 'nghi' ? m.from : m.to, moiTay = m.manual && m.kind === 'moi', ready = moiTay ? !!m.name && !!m.to : !!m.name && !!m.from && (m.kind !== 'chuyen' || !!m.to) || !m.manual;
+  $('dvTen').textContent = m.manual ? (m.name ? KIND[m.kind] + ': ' + fullName(m) : moiTay ? 'Thêm học sinh mới' : 'Thêm nghỉ hoặc chuyển lớp') : KIND[m.kind] + ': ' + fullName(m);
   $('dvRoute').textContent = !ready ? '' : m.kind === 'chuyen' ? m.from + ' → ' + m.to : cls;
   $('dvDateLabel').textContent = m.kind === 'moi' ? 'Ngày vào lớp' : m.kind === 'chuyen' ? 'Ngày chuyển' : 'Ngày nghỉ';
   $('dvAcc').textContent = m.kind === 'nghi' ? 'Thu vào tài khoản: ' + L.EXIT_ACCOUNT : '';
   $('dvErr').textContent = '';
-  $('dvLuu').hidden = false; $('dvLuu').disabled = false; $('dvLuu').className = 'primary'; $('dvKhongThu').hidden = true; $('dvLuu').textContent = 'Thêm vào danh sách thu';
-  $('dvStatus').textContent = m.manual && !ready ? 'Chọn đủ ở trên rồi điền ngày.' : ''; dvHist = null;
+  $('dvLuu').hidden = false; $('dvLuu').disabled = false; $('dvLuu').className = 'primary'; $('dvKhongThu').hidden = true; $('dvLuu').textContent = moiTay ? 'Thêm và tạo tin nhắn' : 'Thêm vào danh sách thu';
+  $('dvStatus').textContent = m.manual && !ready ? (moiTay ? 'Chọn lớp, nhập họ tên rồi điền ngày.' : 'Chọn đủ ở trên rồi điền ngày.') : ''; dvHist = null;
   if (m.kind === 'nghi' && ready) {
     $('dvStatus').textContent = 'Đang xem em đã đóng đợt đó chưa…';
     $('dvLuu').disabled = true;
@@ -941,7 +969,8 @@ function veDuyet(m) {
     }).catch(() => { dvHist = []; capNhatNghi(m); });
   }
   // Preselect what the student already has in the class they come from or go to.
-  const seen = m.from + '|' + m.to + '|' + m.name;
+  // A typed new student has nothing to preselect, and each keystroke must not wipe a discount already chosen.
+  const seen = moiTay ? 'moi' : m.from + '|' + m.to + '|' + m.name;
   if (seen !== dvSeen) {
     dvSeen = seen;
     const c = store.get('hp_cls_' + (m.from || m.to)), had = c && c.data.items.find(x => x.name === m.name && String(x.eng || '') === String(m.eng || ''));
@@ -990,8 +1019,14 @@ async function khongThuMove() {
 }
 async function luuDuyet(onlyBooks) {
   const m = dvMove; if (!m) return;
-  const iso = $('dvDate').value;
-  if (m.manual) {
+  const iso = $('dvDate').value, moiTay = m.manual && m.kind === 'moi';
+  if (moiTay) {
+    if (!m.to || !m.name) { $('dvErr').textContent = 'Hãy chọn lớp và nhập họ tên.'; return; }
+    const had = (moves.news || []).find(r => r && r[1] === m.to && L.clean(r[2]) === L.clean(m.name));
+    if (had && !confirm(fullName(m) + ' đã có dòng học sinh mới ở ' + m.to + (had[4] ? ' ngày ' + had[4] : '') + '. Vẫn thêm dòng mới?')) return;
+    const c = store.get('hp_cls_' + m.to), inClass = c && c.data.items.find(x => L.clean(x.name) === L.clean(m.name));
+    if (!had && inClass && !confirm(fullName(inClass) + ' đã có trong danh sách ' + m.to + '. Vẫn thêm là học sinh mới?')) return;
+  } else if (m.manual) {
     if (!m.from || !m.name) { $('dvErr').textContent = 'Hãy chọn lớp và học sinh.'; return; }
     if (m.kind === 'chuyen' && (!m.to || m.to === m.from)) { $('dvErr').textContent = 'Hãy chọn lớp chuyển đến, khác lớp đang học.'; return; }
     const same = (moves.exits || []).find(r => r && L.clean(r[1]) === L.clean(m.name) && String(r[23] || '') === m.from && String(r[5] || '') === (m.kind === 'chuyen' ? 'Chuyển lớp' : 'Nghỉ học'));
@@ -1006,6 +1041,11 @@ async function luuDuyet(onlyBooks) {
   try {
     await ghiDongMoi(input);
     $('duyet').close();
+    if (moiTay && !L.free({ disc })) {
+      notice('Đã ghi ' + m.name + ', đang chờ Sheet tính tiền để tạo thiệp…');
+      $('dvLuu').disabled = false;
+      return moThiepMoi(m);
+    }
     await loadMoves();
     notice('Đã thêm ' + m.name + ' vào tab ' + input.tab + '. Nếu chưa thấy số tiền ở mục Cần thu, đợi 1–2 phút rồi bấm Tải lại.' + (m.manual ? ' Khi kịp, nhớ cập nhật Theo dõi toàn diện.' : ''));
   } catch (e) { $('dvErr').textContent = 'Không lưu được: ' + e.message; }
@@ -1028,17 +1068,15 @@ async function ghiDongMoi(input) {
     requests.push({ copyPaste: { source: { sheetId, startRowIndex: source - 1, endRowIndex: source, startColumnIndex: c, endColumnIndex: c + 1 },
       destination: { sheetId, startRowIndex: target - 1, endRowIndex: target, startColumnIndex: c, endColumnIndex: c + 1 }, pasteType: 'PASTE_FORMULA' } });
   });
-  // A leaver's row can hold typed values in I, M, N and O instead of formulas, so the row after it takes those from the last row that has one.
-  if (input.tab !== 'HS MỚI') {
-    const typed = [8, 12, 13, 14].filter(c => input.cells[L.colA1(c + 1)] === undefined && !/^=/.test(String((rowFormulas[0] || [])[c])));
-    if (typed.length) {
-      const [all] = await batchGet([tab + '!A' + input.firstDataRow + ':X' + source], 'FORMULA');
-      typed.forEach(c => {
-        let from = -1; all.forEach((r, k) => { if (/^=/.test(String((r || [])[c]))) from = k; });
-        if (from >= 0) requests.push({ copyPaste: { source: { sheetId, startRowIndex: input.firstDataRow + from - 1, endRowIndex: input.firstDataRow + from, startColumnIndex: c, endColumnIndex: c + 1 },
-          destination: { sheetId, startRowIndex: target - 1, endRowIndex: target, startColumnIndex: c, endColumnIndex: c + 1 }, pasteType: 'PASTE_FORMULA' } });
-      });
-    }
+  // The last row can hold typed values where formulas belong (a leaver's I, M, N, O; a pasted HS MỚI row with no account), so the new row takes those from the last row that has one.
+  const typed = (input.tab === L.NEW_TAB ? [0, 6, 7, 13, 14, 15, 18, 19, 20] : [8, 12, 13, 14]).filter(c => input.cells[L.colA1(c + 1)] === undefined && !/^=/.test(String((rowFormulas[0] || [])[c])));
+  if (typed.length) {
+    const first = Math.max(input.firstDataRow, source - 30), [all] = await batchGet([tab + '!A' + first + ':X' + source], 'FORMULA');
+    typed.forEach(c => {
+      let from = -1; all.forEach((r, k) => { if (/^=/.test(String((r || [])[c]))) from = k; });
+      if (from >= 0) requests.push({ copyPaste: { source: { sheetId, startRowIndex: first + from - 1, endRowIndex: first + from, startColumnIndex: c, endColumnIndex: c + 1 },
+        destination: { sheetId, startRowIndex: target - 1, endRowIndex: target, startColumnIndex: c, endColumnIndex: c + 1 }, pasteType: 'PASTE_FORMULA' } });
+    });
   }
   if (requests.length) await api(':batchUpdate', { method: 'POST', body: JSON.stringify({ requests }) }, 2);
   const fill = v => typeof v === 'string' ? v.replace(/{r}/g, target) : v;
@@ -1137,7 +1175,8 @@ function renderHome(box) {
   const notSent = chuaDanhDau(), dueUnsent = moves ? moves.due.filter(it => !it.problem && !dueMark(it)) : [], moveCount = moves ? moves.list.filter(m => !m.wait).length + moves.due.length : 0;
   box.append(
     el('div', { class: 'page-title' }, [
-      el('div', {}, [el('h1', { textContent: 'Việc cần làm' }), el('div', { class: 'sub', textContent: updatedText() })]), updateButton()]),
+      el('div', {}, [el('h1', { textContent: 'Việc cần làm' }), el('div', { class: 'sub', textContent: updatedText() })]),
+      el('div', { class: 'add-btns' }, [el('button', { class: 'act', textContent: 'Thêm học sinh mới', onclick: async () => { goTo('moves'); if (!moves) await loadMoves(); if (moves) moThemMoi(); } }), updateButton()])]),
     el('div', { class: 'tiles' }, [
       tile(now.length, 'Lớp đến hạn thu', true, openCal),
       tile(notSent.reduce((n, r) => n + (r.left ? r.left.length : 1), 0) + dueUnsent.length, 'Chưa tick đã gửi Zalo', true, () => { const s = $('nhacGui'); if (s) s.scrollIntoView({ behavior: 'smooth' }); }),
@@ -1784,6 +1823,7 @@ window.addEventListener('load', () => {
   $('dvKhongThu').addEventListener('click', khongThuMove);
   $('dvHuy').addEventListener('click', () => $('duyet').close());
   $('thiepCopy').addEventListener('click', copyThiep);
+  $('thiepChu').addEventListener('click', copyChuThiep);
   $('thiepDong').addEventListener('click', () => $('thiepDlg').close());
   applyTheme();
   $('btnTheme').addEventListener('click', () => { const next = document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark'; store.set('hp_theme', next); applyTheme(next); });
