@@ -160,6 +160,13 @@ function setCurrent(data, at, fresh) {
 }
 // The saved copy shows at once, so a click never waits on the Sheet; a copy older than FRESH_MS is replaced quietly when the read returns.
 const cuCu = c => c.data.items.length > 0 && !('disc' in c.data.items[0]);
+/** Phones start light, other screens follow the system, and a choice made here stays on this device. */
+function applyTheme(choice) {
+  const phone = window.matchMedia('(max-width: 760px)').matches;
+  const dark = choice ? choice === 'dark' : !phone && window.matchMedia('(prefers-color-scheme: dark)').matches;
+  document.documentElement.dataset.theme = dark ? 'dark' : 'light';
+  const b = $('btnTheme'); if (b) b.textContent = dark ? 'Giao diện sáng' : 'Giao diện tối';
+}
 async function openClass(name, force) {
   const seq = ++loadSeq;
   view = 'class'; step = 0;
@@ -1555,6 +1562,8 @@ window.addEventListener('load', () => {
   $('dvHuy').addEventListener('click', () => $('duyet').close());
   $('thiepCopy').addEventListener('click', copyThiep);
   $('thiepDong').addEventListener('click', () => $('thiepDlg').close());
+  applyTheme();
+  $('btnTheme').addEventListener('click', () => { const next = document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark'; store.set('hp_theme', next); applyTheme(next); });
   $('navNguoi').addEventListener('click', () => { goTo('nguoi'); loadNguoi(); });
   $('btnOut').addEventListener('click', () => {
     if (pending.length && !confirm('Còn ' + pending.length + ' lần tick chưa lưu sẽ bị bỏ. Vẫn đăng xuất?')) return;
@@ -1570,6 +1579,7 @@ window.addEventListener('load', () => {
   $('edBo').addEventListener('click', () => ghiRieng('', ''));
   $('edHuy').addEventListener('click', () => $('sua').close());
   openStore().then(() => {
+    applyTheme(store.get('hp_theme'));
     pending = store.get(QKEY) || []; cal = store.get('hp_cal'); sched = store.get('hp_sched'); restoreSent();
     const fromLink = (location.hash.match(/[#&]k=([\w-]{32,})/) || [])[1];
     if (fromLink) { store.set('hp_link', fromLink); history.replaceState(null, '', location.pathname); }

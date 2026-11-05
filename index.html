@@ -25,6 +25,21 @@
       --shadow: none;
     }
   }
+  /* A choice made on this device beats the system setting; phones start light. */
+  :root[data-theme="light"] {
+    color-scheme: light;
+    --bg: #f4f6f9; --card: #ffffff; --ink: #18212f; --muted: #5d6b7e; --line: #e2e7ee; --soft: #eef2f7;
+    --brand: #0b5394; --brand-soft: #e6f0f9; --on-brand: #ffffff;
+    --ok: #12703a; --ok-soft: #e4f4ea; --warn: #9a5b00; --warn-soft: #fdf1dc; --bad: #b3261e; --bad-soft: #fbe9e7;
+    --shadow: 0 1px 2px rgba(24, 33, 47, .06), 0 4px 16px rgba(24, 33, 47, .05);
+  }
+  :root[data-theme="dark"] {
+    color-scheme: dark;
+    --bg: #10151c; --card: #1a212b; --ink: #e8edf3; --muted: #9aa8b8; --line: #2c3643; --soft: #232c38;
+    --brand: #6aa9e4; --brand-soft: #1d3247; --on-brand: #0d1a26;
+    --ok: #6fd093; --ok-soft: #173325; --warn: #ecb45c; --warn-soft: #3a2c13; --bad: #f2938b; --bad-soft: #3d1f1c;
+    --shadow: none;
+  }
   * { box-sizing: border-box; }
   html { -webkit-text-size-adjust: 100%; }
   body { margin: 0; background: var(--bg); color: var(--ink); font: 15px/1.5 "Be Vietnam Pro", Arial, sans-serif; font-variant-numeric: tabular-nums; }
@@ -307,6 +322,7 @@
       <div class="spacer"></div>
       <select id="lop" aria-label="Mở nhanh một lớp"></select>
       <button id="reload" aria-label="Tải lại số mới" title="Tải lại số mới">↻ Tải lại</button>
+      <button id="btnTheme" class="quiet"></button>
       <button id="btnOut" class="quiet">Đăng xuất</button>
     </div>
   </header>
