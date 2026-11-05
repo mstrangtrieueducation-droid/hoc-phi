@@ -1042,7 +1042,7 @@ async function luuDuyet(onlyBooks) {
     await ghiDongMoi(input);
     $('duyet').close();
     if (moiTay && !L.free({ disc })) {
-      notice('Đã ghi ' + m.name + ', đang chờ Sheet tính tiền để tạo thiệp…');
+      notice('Đã ghi ' + m.name + ', Sheet đang tính tiền, 1–3 phút nữa thiệp tự mở. Cứ để trang này, đừng thêm lại.');
       $('dvLuu').disabled = false;
       return moThiepMoi(m);
     }
