@@ -359,6 +359,50 @@
     return { state: isPaid(block.s) || block.n ? 'da-dong' : /chưa nộp|chua nop/i.test(String(block.s)) ? 'chua-dong' : 'khong-ro', dot, noSchedule };
   }
 
+  /**
+   * What the owner's paid ticks say about the đợt a student left in. The newest ticked block is the money actually received; a later
+   * "Chưa thu ngay" block with no amount was covered by that payment, and a later blank block has no tick, so nothing was paid for it.
+   */
+  function tickStatus(hist, blocks, dateText) {
+    const dot = leaveStatus(hist, blocks, dateText).dot, num = b => Number(String(b.d || '').replace(/\D/g, ''));
+    const ticked = (blocks || []).filter(b => isPaid(b.s) || b.n).sort((a, b) => num(b) - num(a))[0];
+    const last = ticked ? { dot: num(ticked), amount: String(ticked.a || ''), date: String(ticked.n || '') } : null;
+    if (!dot || !last) return { dot, last, covered: false, known: !!dot };
+    if (dot <= last.dot) return { dot, last, covered: true, known: true };
+    const between = (blocks || []).filter(b => num(b) > last.dot && num(b) <= dot);
+    return { dot, last, known: true, covered: between.length === dot - last.dot && between.every(b => /chưa thu ngay|chua thu ngay/i.test(String(b.s)) && !digits(b.a)) };
+  }
+  /**
+   * The bill when the Sheet's formula disagrees with the ticks; null when it agrees. A transfer's formula credits the old class's
+   * leftover sessions as if they were paid, and a leaver's charges used sessions as if they were not.
+   * p: { kind, name, eng, from, cls, date, used, fee, sessions, msg, bookFee, bookList, discCell, status }
+   */
+  function tickBill(p) {
+    const st = p.status, covered = st.covered, nm = p.name + (p.eng ? ' (' + p.eng + ')' : ''), book = p.bookFee || 0;
+    if (!st.known || (p.kind === 'chuyen' ? covered : !covered)) return null;
+    const account = (String(p.msg).match(/chuyển khoản vào (.+?) và gửi lại/) || [])[1] || '';
+    const bookLine = book > 0 ? ['- Tiền sách, tài liệu (' + p.bookList + '): ' + fmt(book) + ' đồng'] : [];
+    const close = total => ['', 'Tổng số tiền cần thanh toán: ' + fmt(total) + ' đồng.', '',
+      total > 0 ? 'Kính nhờ Quý Phụ huynh chuyển khoản vào ' + account + ' và gửi lại ảnh giao dịch thành công để cô đối soát.' : 'Hiện không cần thanh toán thêm.', '', 'Trân trọng cảm ơn Quý Phụ huynh!'];
+    if (p.kind !== 'chuyen') {
+      const msg = ['[THÔNG BÁO THU HỌC PHÍ]', 'LỚP ' + String(p.from).toUpperCase(), '', 'Do con ' + nm + ' xin dừng lớp từ ngày ' + p.date + ' và học phí đã đóng đủ cho đợt ' + st.dot + ', cô xin gửi Quý Phụ huynh thông tin cần hoàn tất như sau:', ''].concat(bookLine.length ? bookLine : ['- Không thu thêm học phí.'], close(book)).join('\n');
+      return { tuition: 0, off: 0, total: book, msg };
+    }
+    const line = String(p.msg).split('\n').find(l => /^- Học phí tại .*Tổng \d+ buổi: [\d.]+ đồng$/.test(l));
+    const intro = String(p.msg).split('\n').find(l => /^Do con /.test(l));
+    if (!line || !intro || !account) return { error: 'Tin nhắn của dòng này không đọc được phần học phí lớp mới, hãy mở Sheet kiểm tra.' };
+    if (!(p.fee > 0) || !(p.sessions > 0)) return { error: 'Chưa đọc được học phí của lớp cũ.' };
+    const old = Math.round(p.used * p.fee / p.sessions), tuition = old + digits(line.split('buổi:').pop());
+    const cell = String(p.discCell === undefined || p.discCell === null ? '' : p.discCell).trim();
+    const share = cell.match(/^=ROUND\(\$O\d+\*(\d+)\/INDIRECT/), pct = cell.match(/^=ROUND\(\$O\d+\*([\d.,]+)%;0\)$/);
+    if (cell && !share && !pct) return { error: 'Không đọc được ô giảm giá của dòng này, hãy mở Sheet kiểm tra.' };
+    const off = share ? Math.round(tuition * Number(share[1]) / p.fee) : pct ? Math.round(tuition * Number(pct[1].replace(',', '.')) / 100) : 0, total = Math.max(0, tuition + book - off);
+    const msg = ['[THÔNG BÁO THU HỌC PHÍ]', 'LỚP ' + String(p.cls).toUpperCase(), '', intro, '',
+      '- Học phí ' + ('0' + p.used).slice(-2) + ' buổi đã học tại ' + p.from + ' (đợt ' + st.dot + ' chưa nộp): ' + fmt(old) + ' đồng', line].concat(bookLine,
+      off > 0 ? ['- Chiết khấu/điều chỉnh số tiền còn phải thu: ' + fmt(off) + ' đồng'] : [], close(total)).join('\n');
+    return { tuition, off, total, msg };
+  }
+
   const NEW_TAB = 'HS MỚI', EXIT_TAB = 'HS NGHI_CHUYEN LOP';
 
   /** Input cells for an approved move, as {tab, firstDataRow, nameCol, cells: {column: value}}. Formula columns are filled separately. */
@@ -475,7 +519,7 @@
         qr: problem ? '' : qrFromMessage(o.msg, amount, info), msg: o.msg }));
     };
     (newRows || []).forEach((r, i) => { if (r && r[2]) add({ disc: r[5], tab: NEW_TAB, row: i + 3, kind: 'moi', cls: r[1], name: r[2], eng: r[3] || '', amountText: String(r[15] || ''), status: String(r[16] || ''), paidDate: String(r[17] || ''), msg: String(r[19] || ''), statusCol: 'Q', dateCol: 'R' }); });
-    (exitRows || []).forEach((r, i) => { if (r && r[1]) add({ noFee: String(r[14]).trim() === '0', disc: r[4], tab: EXIT_TAB, row: i + 4, kind: r[5] === 'Chuyển lớp' ? 'chuyen' : 'nghi', cls: r[5] === 'Chuyển lớp' ? r[6] : r[23], name: r[1], eng: r[2] || '', amountText: String(r[10] || ''), status: String(r[9] || ''), paidDate: String(r[11] || ''), msg: String(r[12] || ''), statusCol: 'J', dateCol: 'L' }); });
+    (exitRows || []).forEach((r, i) => { if (r && r[1]) add({ noFee: String(r[14]).trim() === '0', disc: r[4], tab: EXIT_TAB, row: i + 4, kind: r[5] === 'Chuyển lớp' ? 'chuyen' : 'nghi', cls: r[5] === 'Chuyển lớp' ? r[6] : r[23], from: r[23], date: String(r[7] || ''), used: Number(r[13]), bookFee: digits(r[21]), bookList: String(r[20] || ''), name: r[1], eng: r[2] || '', amountText: String(r[10] || ''), status: String(r[9] || ''), paidDate: String(r[11] || ''), msg: String(r[12] || ''), statusCol: 'J', dateCol: 'L' }); });
     return out;
   }
 
@@ -724,5 +768,5 @@
       v.sentAt || '', v.lan || '', v.by || '', v.paid || '', who || '', at || ''];
   }
 
-  return { TUTOR_MODES, tutorItems, tutorRecord, tutorSessions, tutorMissing, tutorMonths, tutorName, tutorMinutes, tutorRate, monthOf, monthText, billDay, hoursText, dayShort, leaveBill, recentExits, blocksOf, free, deferred, remindDue, REMIND_AFTER, REMIND_EVERY, sentDay, notMarked, dayOf, dayText, dayNow, calendar, classKey, weekSessions, scheduleGaps, scheduleLessons, weekdays, ackKey, sentIndex, leaveStatus, classifyMoves, moveInputs, qrFromMessage, intakeDue, EXIT_ACCOUNT, NEW_TAB, EXIT_TAB, buildClass, dropGop, addGop, discInput, discText, discValue, planDiscount, locate, classRanges, freshRanges, freshAt, planPaid, planUnpaid, planOverride, findPeriodCol, colA1, quote, fmt, digits, clean, isPaid, todayText, ACTIVE };
+  return { tickStatus, tickBill, parseBlocks, TUTOR_MODES, tutorItems, tutorRecord, tutorSessions, tutorMissing, tutorMonths, tutorName, tutorMinutes, tutorRate, monthOf, monthText, billDay, hoursText, dayShort, leaveBill, recentExits, blocksOf, free, deferred, remindDue, REMIND_AFTER, REMIND_EVERY, sentDay, notMarked, dayOf, dayText, dayNow, calendar, classKey, weekSessions, scheduleGaps, scheduleLessons, weekdays, ackKey, sentIndex, leaveStatus, classifyMoves, moveInputs, qrFromMessage, intakeDue, EXIT_ACCOUNT, NEW_TAB, EXIT_TAB, buildClass, dropGop, addGop, discInput, discText, discValue, planDiscount, locate, classRanges, freshRanges, freshAt, planPaid, planUnpaid, planOverride, findPeriodCol, colA1, quote, fmt, digits, clean, isPaid, todayText, ACTIVE };
 });
