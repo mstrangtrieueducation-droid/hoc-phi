@@ -335,6 +335,8 @@
   .top-acts { display: flex; gap: 4px; }
   .add-move { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px; }
   .add-move > div { flex: 1 1 280px; }
+  .add-move > .add-btns { flex: 0 1 auto; }
+  .add-btns { display: flex; flex-wrap: wrap; gap: 8px; }
   #dvChon input { margin-top: 6px; }
   @media (max-width: 760px) {
     .facts { grid-template-columns: repeat(2, minmax(0, 1fr)); }
@@ -418,6 +420,7 @@
   <div class="pv"><img id="thiepAnh" alt="Thiệp học phí"></div>
   <div class="acts">
     <button id="thiepCopy" class="primary">Copy thiệp</button>
+    <button id="thiepChu">Copy chữ và QR</button>
     <button id="thiepDong">Đóng</button>
   </div>
   <div class="st" id="thiepSt" role="status"></div>
