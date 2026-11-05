@@ -609,5 +609,118 @@
     return (students || []).filter(x => !(marks && marks[x.key]));
   }
 
-  return { leaveBill, recentExits, blocksOf, free, deferred, remindDue, REMIND_AFTER, REMIND_EVERY, sentDay, notMarked, dayOf, dayText, dayNow, calendar, classKey, weekSessions, scheduleGaps, scheduleLessons, weekdays, ackKey, sentIndex, leaveStatus, classifyMoves, moveInputs, qrFromMessage, intakeDue, EXIT_ACCOUNT, NEW_TAB, EXIT_TAB, buildClass, dropGop, addGop, discInput, discText, discValue, planDiscount, locate, classRanges, freshRanges, freshAt, planPaid, planUnpaid, planOverride, findPeriodCol, colA1, quote, fmt, digits, clean, isPaid, todayText, ACTIVE };
+  /* ---------- Tutor: billed on the first of the next month, for the sessions the Schedule shows ---------- */
+  const TUTOR_FROM = '2026-09', TUTOR_ACCOUNT = 'STK 0918041993 – MB Bank – Triệu Thị Vân Trang', TUTOR_MODES = ['buoi', 'gio', 'mien'];
+  const monthOf = day => dayText(day).replace(/^\d+\/(\d+)\/(\d+)$/, '$2-$1');
+  const monthText = m => m.slice(5) + '/' + m.slice(0, 4);
+  const monthRange = m => { const y = +m.slice(0, 4), n = +m.slice(5); return { from: Date.UTC(y, n - 1, 1) / 86400000, to: Date.UTC(y, n, 0) / 86400000 }; };
+  const billDay = m => monthRange(m).to + 1;
+  function tutorMonths(today) {
+    const out = [];
+    for (let m = TUTOR_FROM; m <= monthOf(today); m = monthOf(billDay(m))) out.push(m);
+    return out;
+  }
+  /** The Schedule's own rule for a tutor student's name: the words TUTOR and IELTS are not part of it. */
+  const tutorName = cls => String(cls === undefined || cls === null ? '' : cls).normalize('NFC').replace(/TUTOR|IELTS/gi, ' ').replace(/\s+/g, ' ').trim().toUpperCase();
+  function tutorMinutes(time) {
+    const m = String(time || '').match(/^\s*(\d{1,2})[.:-](\d{2})\s*[-–]+\s*(\d{1,2})[.:-](\d{2})/);
+    if (!m) return 0;
+    const d = (+m[3] * 60 + +m[4]) - (+m[1] * 60 + +m[2]);
+    return d > 0 ? d : 0;
+  }
+  const hoursText = min => { const h = Math.floor(min / 60), p = min % 60; return (h ? h + ' giờ' : '') + (h && p ? ' ' : '') + (p || !h ? p + ' phút' : ''); };
+  /** Tutor rows of one Schedule week. rows is A:E and m is column M, both from the same first row; toggles as in weekSessions. */
+  function tutorSessions(rows, m, toggles) {
+    const head = (rows || []).findIndex((r, i) => clean((r || [])[3]) === 'CLASS' && clean(((m || [])[i] || [])[0]) === 'CLASS STATUS');
+    if (head < 0) return [];
+    const flags = (toggles || []).find(r => r && /^(học|nghỉ)$/i.test(String(r[0] || '').trim())) || [], out = [];
+    let day = NaN;
+    for (let i = head + 1; i < rows.length; i++) {
+      const r = rows[i] || [], n = dayOf(r[0]);
+      if (!isNaN(n)) day = n;
+      if (isNaN(day) || !/TUTOR/i.test(String(r[3] || ''))) continue;
+      const name = tutorName(r[3]);
+      if (!name) continue;
+      const time = String(r[1] || '').replace(/:/g, '.').replace(/\s+/g, ' ').trim(), status = String((m[i] || [])[0] || '').trim();
+      out.push({ name, day, time, teacher: String(r[4] || '').trim(), min: tutorMinutes(r[1]), off: /^nghỉ/i.test(status || String(flags[(day + 3) % 7] || '')) }); // A tutor can run on a day the centre is closed, so the row's own status wins.
+    }
+    return out;
+  }
+  /** Days of the month, up to today, that no Schedule week covers: sessions there cannot be counted. */
+  function tutorMissing(weeks, month, today) {
+    const r = monthRange(month), out = [];
+    for (let d = r.from; d <= Math.min(r.to, today); d++) if (!(weeks || []).some(w => d >= w.from && d <= w.to)) out.push(d);
+    return out;
+  }
+  /** The price in force: the latest row starting on or before this month, and the later row when two start together. */
+  function tutorRate(gia, name, month) {
+    let best = null;
+    (gia || []).forEach(r => {
+      const from = String((r || [])[1] || ''), mode = String((r || [])[2] || '');
+      if (tutorName(r[0]) !== name || !from || from > month || !TUTOR_MODES.includes(mode)) return;
+      if (!best || from >= best.from) best = { from, mode, price: digits(r[3]) };
+    });
+    return best;
+  }
+  const tutorFee = (rate, count, minutes) => !rate || rate.mode === 'mien' ? 0 : rate.mode === 'gio' ? Math.round(minutes / 60 * rate.price) : count * rate.price;
+  const dayShort = d => WEEKDAY[(d + 3) % 7] + ', ' + dayText(d).slice(0, 5);
+  function tutorMessage(it) {
+    const r = it.rate, lines = ['[THÔNG BÁO THU HỌC PHÍ]', 'LỚP TUTOR', 'Học viên: ' + it.name, '',
+      '- Tháng ' + monthText(it.month) + ' con học ' + it.count + ' buổi, tổng ' + hoursText(it.minutes) + '.'];
+    if (it.done.length) lines.push('Các buổi đã học:');
+    it.done.forEach((s, k) => lines.push((k + 1) + '. ' + dayShort(s.day) + ': ' + s.time + (s.teacher ? ' (' + s.teacher + ')' : '')));
+    if (it.offs.length) lines.push('Buổi nghỉ không tính: ' + it.offs.map(s => dayText(s.day).slice(0, 5)).join(', ') + '.');
+    lines.push('');
+    if (!it.own) {
+      if (r && r.mode === 'mien') lines.push('- Học phí: miễn phí');
+      else if (r && r.mode === 'gio') lines.push('- Học phí: ' + hoursText(it.minutes) + ' x ' + fmt(r.price) + ' đồng/giờ = ' + fmt(it.fee) + ' đồng');
+      else if (r) lines.push('- Học phí: ' + it.count + ' buổi x ' + fmt(r.price) + ' đồng/buổi = ' + fmt(it.fee) + ' đồng');
+      it.book.forEach(b => lines.push('- Sách: ' + b.name + ': ' + fmt(b.price) + ' đồng'));
+      lines.push('');
+    }
+    lines.push('Tổng số tiền cần thanh toán là: ' + fmt(it.total) + ' đồng.', '',
+      'Để thanh toán học phí, kính đề nghị Quý Phụ huynh chuyển khoản vào ' + TUTOR_ACCOUNT + ', đồng thời gửi lại ảnh giao dịch thành công để cô đối soát.', '',
+      'Trân trọng cảm ơn Quý Phụ huynh!');
+    return lines.join('\n');
+  }
+  /**
+   * One bill per student for a month. A bill that was sent or paid keeps the amount it had then; if the Schedule or the price
+   * has moved since, changed says so instead of rewriting it. Free students with nothing else to pay are never counted.
+   */
+  function tutorItems(p) {
+    const recs = {};
+    (p.thu || []).forEach((r, k) => { if (r && r[0]) recs[r[0]] = { rec: r, row: k + 2 }; });
+    const names = new Set((p.sessions || []).filter(s => monthOf(s.day) === p.month).map(s => s.name));
+    Object.keys(recs).forEach(k => { if (String(recs[k].rec[1]) === p.month && recs[k].rec[2]) names.add(String(recs[k].rec[2])); });
+    return [...names].sort((a, b) => a.localeCompare(b, 'vi')).map(name => {
+      const key = 'T|' + p.month + '|' + name, hit = recs[key] || { rec: [], row: 0 }, rec = hit.rec;
+      const list = (p.sessions || []).filter(s => s.name === name && monthOf(s.day) === p.month).sort((a, b) => a.day - b.day || a.time.localeCompare(b.time));
+      const offs = list.filter(s => s.off), past = list.filter(s => !s.off && s.day <= p.today), later = list.filter(s => !s.off && s.day > p.today);
+      const done = past.filter(s => s.min > 0 && s.teacher), bad = past.filter(s => !(s.min > 0 && s.teacher));
+      const count = done.length, minutes = done.reduce((n, s) => n + s.min, 0), rate = tutorRate(p.gia, name, p.month);
+      let book = []; try { book = JSON.parse(rec[6] || '[]'); } catch (e) { book = []; }
+      const fee = tutorFee(rate, count, minutes), bookSum = book.reduce((n, b) => n + digits(b.price), 0), own = digits(rec[7]), total = own || fee + bookSum;
+      const paid = String(rec[12] || ''), sentAt = String(rec[9] || ''), snap = digits(rec[5]), locked = !!(paid || sentAt) && snap > 0;
+      const it = { key, month: p.month, name, eng: '', row: hit.row, rec, list, done, offs, later, bad, count, minutes, rate, book, fee, bookSum, own, total,
+        amount: locked ? snap : total, changed: locked && snap !== total, snapCount: locked ? digits(rec[3]) : 0,
+        mien: !!rate && rate.mode === 'mien' && !bookSum && !own, trong: !rate && !own, finished: p.today >= billDay(p.month),
+        paid, date: paid, status: paid ? 'Đã nộp' : '', sentAt, lan: digits(rec[10]), by: String(rec[11] || ''), riengMsg: String(rec[8] || '') };
+      it.msg = it.riengMsg || tutorMessage(it);
+      it.qr = qrFromMessage('chuyển khoản vào ' + TUTOR_ACCOUNT + ' và gửi', it.amount, 'TUTOR T' + p.month.slice(5) + ' ' + name);
+      return it;
+    });
+  }
+  /** The full row for ThuTien, with the current counts and amount kept whenever it is marked sent or paid. */
+  function tutorRecord(it, patch, who, at) {
+    const v = Object.assign({ book: it.book, own: it.own, riengMsg: it.riengMsg, sentAt: it.sentAt, lan: it.lan, by: it.by, paid: it.paid }, patch);
+    const settle = !!(v.paid || v.sentAt), first = settle && !(it.paid || it.sentAt);
+    const bookSum = v.book.reduce((n, b) => n + digits(b.price), 0), total = Number(v.own) || it.fee + bookSum;
+    // Editing a bill already sent or paid leaves its figure alone unless the amount itself was edited just now.
+    const redo = 'book' in patch || 'own' in patch;
+    const keep = settle && !first && !redo;
+    return [it.key, it.month, it.name, keep ? it.snapCount || it.count : it.count, it.minutes, settle ? (keep ? it.amount : total) : '', v.book.length ? JSON.stringify(v.book) : '', v.own || '', v.riengMsg || '',
+      v.sentAt || '', v.lan || '', v.by || '', v.paid || '', who || '', at || ''];
+  }
+
+  return { TUTOR_MODES, tutorItems, tutorRecord, tutorSessions, tutorMissing, tutorMonths, tutorName, tutorMinutes, tutorRate, monthOf, monthText, billDay, hoursText, dayShort, leaveBill, recentExits, blocksOf, free, deferred, remindDue, REMIND_AFTER, REMIND_EVERY, sentDay, notMarked, dayOf, dayText, dayNow, calendar, classKey, weekSessions, scheduleGaps, scheduleLessons, weekdays, ackKey, sentIndex, leaveStatus, classifyMoves, moveInputs, qrFromMessage, intakeDue, EXIT_ACCOUNT, NEW_TAB, EXIT_TAB, buildClass, dropGop, addGop, discInput, discText, discValue, planDiscount, locate, classRanges, freshRanges, freshAt, planPaid, planUnpaid, planOverride, findPeriodCol, colA1, quote, fmt, digits, clean, isPaid, todayText, ACTIVE };
 });

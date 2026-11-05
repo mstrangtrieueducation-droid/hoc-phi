@@ -277,6 +277,14 @@
   .sent-row b { font-weight: 600; }
   /* Lists of names. */
   .group { margin-top: 8px; }
+  .tutor-edit { display: grid; gap: 10px; margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--line); }
+  .tutor-edit h3 { font-size: 14px; font-weight: 600; margin: 0 0 4px; }
+  .tutor-edit input, .tutor-edit select, .tutor-edit textarea { min-height: 40px; padding: 6px 8px; border: 1px solid var(--line); border-radius: 10px; background: var(--card); color: inherit; font: inherit; max-width: 100%; }
+  .tutor-edit textarea { width: 100%; min-height: 160px; }
+  .tutor-line { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+  .tutor-list { margin: 8px 0 0; padding-left: 22px; font-size: 14px; }
+  .tutor-list .off { color: var(--muted); text-decoration: line-through; }
+  .tutor-list .later { color: var(--muted); }
   .names { display: flex; flex-wrap: wrap; gap: 4px 6px; margin-top: 4px; }
   .name { padding: 2px 10px; border-radius: 12px; background: var(--soft); font-size: 13px; }
   .name small { margin-left: 6px; color: var(--muted); font-size: 12px; }
@@ -316,6 +324,7 @@
         <button id="navHome">Tổng quan</button>
         <button id="btnCal">Lịch thu</button>
         <button id="navLop">Các lớp</button>
+        <button id="navTutor">Tutor</button>
         <button id="btnMoves">Biến động</button>
         <button id="navNguoi" hidden>Người dùng</button>
       </nav>

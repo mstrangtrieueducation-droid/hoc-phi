@@ -3,6 +3,7 @@ const CONFIG = window.HP_CONFIG;
 const SHEET_API = 'https://sheets.googleapis.com/v4/spreadsheets/' + CONFIG.sheetId;
 const SCHEDULE_API = 'https://sheets.googleapis.com/v4/spreadsheets/' + CONFIG.scheduleId;
 const LOG_API = 'https://sheets.googleapis.com/v4/spreadsheets/' + CONFIG.logId;
+const TUTOR_API = 'https://sheets.googleapis.com/v4/spreadsheets/' + CONFIG.tutorId;
 const L = window.HpLogic;
 const $ = id => document.getElementById(id);
 // Saved data lives in IndexedDB: localStorage is shared with every other page on this github.io address, and those pages fill its 5 MB.
@@ -521,10 +522,12 @@ function showLogin(again) {
 function st(s, err) { const n = $('st'); if (n) { n.textContent = s; n.style.color = err ? 'var(--bad)' : 'var(--ok)'; } }
 function render() {
   const box = $('view'); box.replaceChildren();
-  [['navHome', 'home'], ['btnCal', 'cal'], ['navLop', 'lop'], ['btnMoves', 'moves'], ['navNguoi', 'nguoi']].forEach(([id, v]) => $(id).setAttribute('aria-current', String(view === v || (v === 'lop' && view === 'class'))));
-  if (view === 'nguoi') renderNguoi(box); else if (view === 'home') renderHome(box); else if (view === 'lop') renderLop(box); else if (view === 'moves') renderMoves(box); else if (view === 'cal') renderCal(box); else renderClass(box);
+  [['navHome', 'home'], ['btnCal', 'cal'], ['navLop', 'lop'], ['navTutor', 'tutor'], ['btnMoves', 'moves'], ['navNguoi', 'nguoi']].forEach(([id, v]) => $(id).setAttribute('aria-current', String(view === v || (v === 'lop' && view === 'class'))));
+  if (view === 'tutor') renderTutor(box); else if (view === 'nguoi') renderNguoi(box); else if (view === 'home') renderHome(box); else if (view === 'lop') renderLop(box); else if (view === 'moves') renderMoves(box); else if (view === 'cal') renderCal(box); else renderClass(box);
   const n = moves ? moves.list.filter(m => !m.wait).length + moves.due.length : 0;
   $('btnMoves').textContent = n ? 'Biến động (' + n + ')' : 'Biến động';
+  const tutorLeft = tutorViec().left.length;
+  $('navTutor').textContent = tutorLeft ? 'Tutor (' + tutorLeft + ')' : 'Tutor';
   const dueNow = cal ? cal.list.filter(x => (x.group === 'den' || x.group === 'qua') && !daGuiHet(x)).length : 0;
   $('btnCal').textContent = dueNow ? 'Lịch thu (' + dueNow + ')' : 'Lịch thu';
   renderNotices();
@@ -857,7 +860,7 @@ function moThiep(it) {
   thiep(it).then(b => { img.src = URL.createObjectURL(b); }).catch(e => { $('thiepSt').textContent = 'Không tạo được thiệp: ' + e.message; });
 }
 async function copyThiep() {
-  const it = moves && moves.due.find(x => x.key === $('thiepDlg').dataset.key); if (!it) return;
+  const key = $('thiepDlg').dataset.key, it = (moves && moves.due.find(x => x.key === key)) || (tutor && !tutor.error && tutorMonthItems(key.split('|')[1] || '').find(x => x.key === key)); if (!it) return;
   try { await navigator.clipboard.write([new ClipboardItem({ 'image/png': thiep(it) })]); $('thiepSt').textContent = 'Đã copy thiệp, sang Zalo dán rồi gửi.'; }
   catch (e) { $('thiepSt').textContent = 'Không copy được: nhấn giữ hoặc chuột phải vào ảnh để sao chép.'; }
 }
@@ -1141,14 +1144,181 @@ function renderHome(box) {
       tile(nhacLai.reduce((n, c) => n + c.list.length, 0), 'Gửi quá ' + L.REMIND_AFTER + ' ngày chưa thấy nộp', true, () => { const s = $('nhacLai'); if (s) s.scrollIntoView({ behavior: 'smooth' }); }),
       tile(soon.length, 'Lớp sắp thu', false, openCal),
       tile(blankAll, 'Em chưa ghi nộp', false, () => { lopFilter = 'ghi'; goTo('lop'); }),
-      tile(moveCount, 'Biến động cần xử lý', true, () => { goTo('moves'); if (!moves || Date.now() - moves.at > FRESH_MS) loadMoves(); })]),
+      tile(moveCount, 'Biến động cần xử lý', true, () => { goTo('moves'); if (!moves || Date.now() - moves.at > FRESH_MS) loadMoves(); }),
+      tile(tutorViec().left.length, 'Tutor chưa thu', true, openTutor)]),
     el('div', { class: 'stats' }, [stat(L.fmt(owe - blankOwe) + ' đ', 'Đã rõ chưa nộp'), stat(L.fmt(blankOwe) + ' đ', 'Chưa ghi, có thể đã nộp'), stat(String(flagged), 'Số tiền cần xem lại', flagged > 0)]));
+  if (!tutor && !tutorLoading) loadTutor();
+  const tutorNhac = tutorViec().nhac;
+  if (tutorNhac.length) box.append(el('div', { class: 'warn-line', style: 'margin:0 0 12px' }, ['Tutor: ' + tutorNhac.length + ' em gửi quá ' + L.REMIND_AFTER + ' ngày chưa thấy nộp.', el('button', { class: 'quiet', textContent: 'Xem', onclick: openTutor })]));
   if (notSent.length || dueUnsent.length) box.append(...nhacPanel(notSent, dueUnsent));
   if (nhacLai.length) box.append(...nhacLaiPanel(nhacLai));
   if (now.length) box.append(el('h2', { class: 'section', id: 'canLam', textContent: 'Đến hạn thu (' + now.length + ')' }), el('div', { class: 'classes' }, now.map(calRow)));
   if (soon.length) box.append(el('h2', { class: 'section', textContent: 'Sắp thu (' + soon.length + ')' }), el('div', { class: 'classes' }, soon.map(calRow)));
   if (!now.length && !soon.length) box.append(el('div', { class: 'empty', textContent: cal ? 'Không còn lớp nào đang chờ gửi tin.' : 'Đang đọc lịch thu…' }));
   if (sentDone.length) box.append(el('details', { class: 'hist' }, [el('summary', { textContent: 'Đã gửi tin (' + sentDone.length + ' lớp)' }), el('div', { class: 'classes' }, sentDone.map(calRow))]));
+}
+/* ---------- Tutor: its own file and page, counted from the Schedule ---------- */
+let tutor = null, tutorLoading = false, tutorMonth = '', tutorOpen = '', tutorQueue = Promise.resolve();
+async function loadTutor(force) {
+  if (tutorLoading || (!force && tutor && !tutor.error && Date.now() - tutor.at < FRESH_MS)) return;
+  tutorLoading = true; if (view === 'tutor') render();
+  try {
+    const [gia, thu] = await batchGetAt(TUTOR_API, ['Gia!A2:F', 'ThuTien!A2:O']);
+    let sessions = tutor && tutor.sessions, weeks = tutor && tutor.weeks, schedAt = tutor && tutor.schedAt;
+    // The weeks are the slow part and rarely change, so they wait 30 minutes unless someone presses update.
+    if (force || !sessions || Date.now() - schedAt > 1800000) {
+      const first = L.dayOf('01/09/2026'), meta = await api(SCHEDULE_API + '?fields=sheets.properties.title');
+      weeks = meta.sheets.map(s => s.properties.title).map(title => {
+        const m = title.match(/^(\d{2}\.\d{2}\.\d{4}) - (\d{2}\.\d{2}\.\d{4})$/);
+        return m ? { title, from: L.dayOf(m[1]), to: L.dayOf(m[2]) } : null;
+      }).filter(w => w && w.to >= first);
+      sessions = [];
+      for (let k = 0; k < weeks.length; k += 5) {
+        const part = weeks.slice(k, k + 5);
+        const got = await batchGetAt(SCHEDULE_API, part.reduce((a, w) => a.concat(['A30:E320', 'M30:M320', 'A30:G60'].map(r => L.quote(w.title) + '!' + r)), []));
+        part.forEach((w, n) => { L.tutorSessions(got[n * 3], got[n * 3 + 1], got[n * 3 + 2]).filter(s => s.day >= w.from && s.day <= w.to && s.day >= first).forEach(s => sessions.push(s)); });
+      }
+      schedAt = Date.now();
+    }
+    tutor = { gia, thu, sessions, weeks, schedAt, at: Date.now() };
+    store.set('hp_tutor', tutor);
+  } catch (e) {
+    if (tutor && !tutor.error) notice('Chưa đọc được dữ liệu tutor mới: ' + e.message, true);
+    else tutor = { error: 'Chưa đọc được dữ liệu tutor: ' + e.message };
+  }
+  tutorLoading = false; if (view === 'tutor' || (view === 'home' && !homeBusy())) render();
+}
+function openTutor() { goTo('tutor'); loadBooks(); loadTutor(); }
+const tutorMonthItems = month => L.tutorItems({ sessions: tutor.sessions, gia: tutor.gia, thu: tutor.thu, month, today: L.dayNow(new Date()) });
+const tutorMarks = items => { const o = {}; items.forEach(x => { if (x.sentAt) o[x.key] = { at: x.sentAt, lan: x.lan }; }); return o; };
+const tutorCanThu = x => !x.mien && !x.paid && (x.count > 0 || x.bookSum > 0 || x.own > 0);
+/** Across every finished month: bills still to collect, and those whose reminder is due. Empty until the data has loaded. */
+function tutorViec() {
+  if (!tutor || tutor.error) return { left: [], nhac: [] };
+  const today = L.dayNow(new Date()), all = L.tutorMonths(today).reduce((a, m) => a.concat(tutorMonthItems(m)), []).filter(x => x.finished && tutorCanThu(x));
+  return { left: all, nhac: L.remindDue(all, tutorMarks(all), today, NaN) };
+}
+const tutorNow = () => L.dayText(L.dayNow(new Date())) + ' ' + new Date().toTimeString().slice(0, 5);
+const tutorKeep = what => { tutorQueue = tutorQueue.then(what).catch(e => { notice('Không lưu được dữ liệu tutor: ' + e.message, true); return loadTutor(true); }); };
+const tutorWrite = data => api(TUTOR_API + '/values:batchUpdate', { method: 'POST', body: JSON.stringify({ valueInputOption: 'RAW', data }) }, 2);
+const tutorAppend = (range, row) => api(TUTOR_API + '/values/' + range + ':append?valueInputOption=RAW&insertDataOption=INSERT_ROWS', { method: 'POST', body: JSON.stringify({ values: [row] }) }, 2);
+/** Shows the change at once and saves behind it, in order, so a second tick cannot overtake the first. */
+function tutorLuu(it, change) {
+  const row = L.tutorRecord(it, change, who, tutorNow()), at = tutor.thu.findIndex(r => r && r[0] === it.key);
+  if (at >= 0) tutor.thu[at] = row; else tutor.thu.push(row);
+  store.set('hp_tutor', tutor); render();
+  tutorKeep(async () => {
+    const k = tutor.thu.findIndex(r => r && r[0] === it.key);
+    if (at >= 0) return tutorWrite([{ range: 'ThuTien!A' + (k + 2) + ':O' + (k + 2), values: [row] }]);
+    const put = await tutorAppend('ThuTien!A:O', row), m = String(put.updates && put.updates.updatedRange).match(/!A(\d+)/);
+    if (m && +m[1] !== k + 2) await loadTutor(true); // someone else added a row at the same moment
+  });
+}
+function tutorLuuGia(name, month, mode, price) {
+  const row = [name, month, mode, mode === 'mien' ? '' : price, who, tutorNow()];
+  tutor.gia.push(row); store.set('hp_tutor', tutor); render();
+  tutorKeep(() => tutorAppend('Gia!A:F', row));
+}
+function tutorRateText(it) {
+  const r = it.rate;
+  return !r ? 'Chưa chọn giá' : r.mode === 'mien' ? 'Miễn phí' : L.fmt(r.price) + ' đ/' + (r.mode === 'gio' ? 'giờ' : 'buổi');
+}
+function tutorDates(it) {
+  const li = (s, cls, tail) => el('li', { class: cls, textContent: L.dayShort(s.day) + ' · ' + (s.time || 'chưa có giờ') + (s.teacher ? ' · ' + s.teacher : '') + tail });
+  const rows = it.list.map(s => s.off ? li(s, 'off', ' · nghỉ') : it.later.includes(s) ? li(s, 'later', ' · sắp học') : it.bad.includes(s) ? li(s, '', ' · thiếu giờ hoặc giáo viên, chưa tính') : li(s, '', ''));
+  return el('details', { style: 'margin-top:8px' }, [el('summary', { class: 'sub', textContent: 'Xem ' + it.list.length + ' dòng buổi học trong Schedule' }), el('ol', { class: 'tutor-list' }, rows)]);
+}
+function tutorEdit(it) {
+  const mode = el('select', { 'aria-label': 'Cách tính tiền' }, [['buoi', 'Theo buổi'], ['gio', 'Theo giờ'], ['mien', 'Miễn phí']].map(([v, t]) => el('option', { value: v, textContent: t })));
+  mode.value = it.rate ? it.rate.mode : 'buoi';
+  const price = el('input', { inputmode: 'numeric', placeholder: 'Số tiền, ví dụ 300000', 'aria-label': 'Đơn giá', value: it.rate && it.rate.price ? String(it.rate.price) : '' });
+  const used = el('span', { class: 'tutor-line' });
+  const fillUsed = () => {
+    const count = {};
+    tutor.gia.forEach(r => { if (r[2] === mode.value && L.digits(r[3])) count[L.digits(r[3])] = (count[L.digits(r[3])] || 0) + 1; });
+    used.replaceChildren(...Object.keys(count).sort((a, b) => count[b] - count[a]).slice(0, 6).map(p => el('button', { class: 'quiet', textContent: L.fmt(p), onclick: () => { price.value = p; } })));
+    price.hidden = mode.value === 'mien'; used.hidden = mode.value === 'mien';
+  };
+  mode.addEventListener('change', fillUsed); fillUsed();
+  const luuGia = () => {
+    const v = L.digits(price.value);
+    if (mode.value !== 'mien' && !v) return notice('Hãy nhập số tiền, hoặc chọn Miễn phí.', true);
+    notice(''); tutorLuuGia(it.name, it.month, mode.value, v);
+  };
+  const bookPick = el('select', { 'aria-label': 'Chọn sách' }, [el('option', { value: '', textContent: bookList ? 'Chọn sách…' : 'Đang đọc danh mục sách…' })].concat((bookList || []).map(b => el('option', { value: b.name, textContent: b.name + ' · ' + L.fmt(b.price) }))));
+  const bookPrice = el('input', { inputmode: 'numeric', placeholder: 'Giá sách', 'aria-label': 'Giá sách', style: 'width:110px' });
+  bookPick.addEventListener('change', () => { const b = (bookList || []).find(x => x.name === bookPick.value); bookPrice.value = b ? String(b.price) : ''; });
+  const amt = el('input', { inputmode: 'numeric', placeholder: 'Để trống là tự tính', 'aria-label': 'Số tiền riêng', value: it.own ? String(it.own) : '' });
+  const msg = el('textarea', { 'aria-label': 'Tin nhắn riêng', value: it.msg });
+  return el('div', { class: 'tutor-edit' }, [
+    el('div', {}, [el('h3', { textContent: 'Giá' }), el('div', { class: 'tutor-line' }, [mode, price, el('button', { class: 'act', textContent: 'Lưu giá', onclick: luuGia })]), used,
+      el('div', { class: 'sub', style: 'margin-top:4px', textContent: 'Áp dụng từ tháng ' + L.monthText(it.month) + ' trở đi. Tháng trước và tháng đã gửi tin vẫn giữ số cũ.' })]),
+    el('div', {}, [el('h3', { textContent: 'Sách' }),
+      it.book.length ? el('div', { class: 'names' }, it.book.map((b, k) => el('span', { class: 'chip idle' }, [b.name + ' · ' + L.fmt(b.price) + ' ', el('button', { class: 'quiet', style: 'min-height:24px;padding:0 4px', 'aria-label': 'Bỏ ' + b.name, textContent: '×', onclick: () => tutorLuu(it, { book: it.book.filter((x, n) => n !== k) }) })]))) : '',
+      el('div', { class: 'tutor-line', style: 'margin-top:4px' }, [bookPick, bookPrice, el('button', { class: 'act', textContent: 'Thêm sách', onclick: () => {
+        if (!bookPick.value || !L.digits(bookPrice.value)) return notice('Hãy chọn sách và giá.', true);
+        notice(''); tutorLuu(it, { book: it.book.concat({ name: bookPick.value, price: L.digits(bookPrice.value) }) });
+      } })])]),
+    el('div', {}, [el('h3', { textContent: 'Sửa riêng' }), msg, el('div', { class: 'tutor-line', style: 'margin-top:4px' }, [amt,
+      el('button', { class: 'act', textContent: 'Lưu riêng', onclick: () => tutorLuu(it, { own: L.digits(amt.value), riengMsg: msg.value.trim() === it.msg.trim() ? it.riengMsg : msg.value.trim() }) }),
+      it.own || it.riengMsg ? el('button', { class: 'quiet', textContent: 'Dùng lại tự động', onclick: () => tutorLuu(it, { own: 0, riengMsg: '' }) }) : ''])])]);
+}
+function tutorRow(it, nhac) {
+  const open = tutorOpen === it.key, today = L.dayNow(new Date()), acts = [];
+  const pickDate = el('input', { type: 'date', 'aria-label': 'Ngày nộp', value: new Date(today * 86400000).toISOString().slice(0, 10) });
+  const toText = v => v.split('-').reverse().join('/');
+  if (!it.mien && !it.trong && it.finished) {
+    if (it.paid) acts.push(el('span', { class: 'chip ok', textContent: 'Đã nộp ' + it.paid }), el('button', { class: 'quiet', textContent: 'Hoàn tác', onclick: () => tutorLuu(it, { paid: '' }) }));
+    else {
+      if (it.qr) acts.push(el('button', { textContent: 'Xem thiệp', onclick: () => moThiep(it) }), el('button', { class: 'quiet', textContent: 'Copy chữ', onclick: () => navigator.clipboard.writeText(it.msg + '\n\nMã QR chuyển khoản: ' + it.qr).then(() => notice('Đã copy tin của ' + it.name + '.'), () => notice('Không copy được.', true)) }));
+      if (it.sentAt) {
+        acts.push(el('span', { class: 'sent', textContent: 'Đã gửi ' + it.sentAt + (it.by ? ' · ' + it.by : '') + (it.lan ? ' · nhắc ' + it.lan + ' lần' : '') }), el('button', { class: 'quiet', textContent: 'Bỏ đánh dấu', onclick: () => tutorLuu(it, { sentAt: '', by: '', lan: 0 }) }));
+        if (nhac) acts.push(el('button', { class: 'act', textContent: 'Đã nhắc lại', onclick: () => tutorLuu(it, { sentAt: L.dayText(today), lan: it.lan + 1, by: who }) }));
+      } else acts.push(el('button', { class: 'act', textContent: 'Đánh dấu đã gửi', onclick: () => tutorLuu(it, { sentAt: L.dayText(today), by: who }) }));
+      acts.push(pickDate, el('button', { class: 'act', textContent: 'Đã nộp', onclick: () => tutorLuu(it, { paid: toText(pickDate.value) }) }));
+    }
+  } else if (!it.mien && !it.trong && !it.finished) acts.push(el('span', { class: 'chip idle', textContent: 'Thu ngày ' + L.dayText(L.billDay(it.month)) }));
+  acts.push(el('button', { class: it.trong ? 'act' : 'quiet', textContent: it.trong ? 'Chọn giá' : open ? 'Đóng' : 'Giá, sách, sửa riêng', onclick: () => { tutorOpen = open ? '' : it.key; render(); } }));
+  const facts = [it.count + ' buổi', L.hoursText(it.minutes), tutorRateText(it)].concat(it.bookSum ? 'Sách ' + L.fmt(it.bookSum) : [], it.later.length ? 'Sắp học ' + it.later.length : [], it.offs.length ? 'Nghỉ ' + it.offs.length : []).join(' · ');
+  return el('div', { class: 'card row' }, [
+    el('div', { class: 'r1' }, [el('div', { class: 'nm', textContent: it.name }), el('div', { class: 'amt', textContent: it.mien ? '' : money(it.amount) })]),
+    el('div', { class: 'sub', textContent: facts }),
+    it.changed ? el('div', { class: 'warn-line', textContent: 'Lúc ' + (it.paid ? 'thu' : 'gửi') + ' là ' + money(it.amount) + ' (' + it.snapCount + ' buổi), Schedule và giá hiện tính ra ' + money(it.total) + ' (' + it.count + ' buổi).' }) : '',
+    it.bad.length ? el('div', { class: 'warn-line', textContent: it.bad.length + ' buổi thiếu giờ hoặc giáo viên trong Schedule nên chưa tính.' }) : '',
+    nhac ? el('div', { class: 'warn-line', textContent: 'Gửi đã ' + nhac.days + ' ngày chưa thấy nộp, nên nhắc lại.' }) : '',
+    el('div', { class: 'r2' }, acts), tutorDates(it), open ? tutorEdit(it) : '']);
+}
+function renderTutor(box) {
+  box.append(el('div', { class: 'page-title' }, [
+    el('div', {}, [el('h1', { textContent: 'Tutor' }), el('div', { class: 'sub', textContent: 'Học xong tháng nào, thu ngày đầu tháng sau. Số buổi đọc từ Schedule.' })]),
+    el('button', { class: 'act', textContent: tutorLoading ? 'Đang đọc Schedule…' : 'Cập nhật', disabled: tutorLoading, onclick: () => loadTutor(true) })]));
+  if (!tutor) { box.append(el('div', { class: 'empty', textContent: 'Đang đọc các tuần trong Schedule…' })); return; }
+  if (tutor.error) { box.append(el('div', { class: 'warn-line', textContent: tutor.error })); return; }
+  const today = L.dayNow(new Date()), months = L.tutorMonths(today), done = months.filter(m => L.billDay(m) <= today);
+  if (!months.includes(tutorMonth)) tutorMonth = done.length ? done[done.length - 1] : months[months.length - 1];
+  box.append(el('div', { class: 'filters' }, months.map(m => el('button', { textContent: 'Tháng ' + L.monthText(m), 'aria-pressed': String(m === tutorMonth), onclick: () => { tutorMonth = m; tutorOpen = ''; render(); } }))));
+  const items = tutorMonthItems(tutorMonth), finished = L.billDay(tutorMonth) <= today, billed = items.filter(x => !x.mien && !x.trong);
+  const got = billed.filter(x => x.paid), due = billed.filter(tutorCanThu), noPrice = items.filter(x => x.trong && (x.count > 0 || !finished)), free = items.filter(x => x.mien), idle = items.filter(x => finished && !x.mien && !x.paid && !noPrice.includes(x) && !due.includes(x));
+  const sum = list => list.reduce((n, x) => n + x.amount, 0);
+  box.append(el('div', { class: 'stats' }, [
+    stat(L.dayText(L.billDay(tutorMonth)), finished ? 'Ngày thu' : 'Ngày thu, tháng này chưa xong'),
+    stat(L.fmt(sum(got)) + ' đ', 'Đã thu · ' + got.length + ' em'),
+    stat(L.fmt(sum(due)) + ' đ', (finished ? 'Còn phải thu · ' : 'Tạm tính · ') + due.length + ' em', finished && due.length > 0)]));
+  const missing = L.tutorMissing(tutor.weeks, tutorMonth, today);
+  if (missing.length) box.append(el('div', { class: 'warn-line', style: 'margin:0 0 12px', textContent: 'Schedule chưa có tuần cho ' + missing.length + ' ngày trong tháng, từ ' + L.dayText(missing[0]) + ' đến ' + L.dayText(missing[missing.length - 1]) + '. Số buổi có thể thiếu.' }));
+  const nhacs = {}; L.remindDue(due, tutorMarks(due), today, NaN).forEach(n => { nhacs[n.item.key] = n; });
+  const part = (title, list) => { if (list.length) box.append(el('h2', { class: 'section', textContent: title + ' (' + list.length + ')' }), ...list.map(x => tutorRow(x, nhacs[x.key]))); };
+  const fold = (title, list) => { if (list.length) box.append(el('details', { class: 'hist' }, [el('summary', { textContent: title + ' (' + list.length + ')' })].concat(list.map(x => tutorRow(x))))); };
+  part('Chưa chọn giá', noPrice);
+  if (finished) {
+    part('Gửi lâu chưa thấy nộp', due.filter(x => nhacs[x.key]));
+    part('Chưa gửi Zalo', due.filter(x => !x.sentAt));
+    part('Đã gửi, chờ nộp', due.filter(x => x.sentAt && !nhacs[x.key]));
+    fold('Đã nộp', got);
+  } else part('Đang học', billed);
+  fold('Tháng này không có buổi nào', idle);
+  fold('Miễn phí, không tính', free);
+  if (!items.length) box.append(el('div', { class: 'empty', textContent: 'Schedule không có buổi tutor nào trong tháng này.' }));
 }
 let lopFilter = 'all';
 function renderLop(box) {
@@ -1216,7 +1386,7 @@ async function loadBooks() {
   try {
     const [rows] = await batchGet(["'DANH_MUC_SACH'!A4:B80"]);
     bookList = readBookList(rows);
-    if (view === 'class' && tab === 'dot') render();
+    if ((view === 'class' && tab === 'dot') || view === 'tutor') render();
   } catch (e) { notice('Chưa đọc được danh mục sách: ' + e.message, true); }
 }
 function renderDot(box) {
@@ -1552,6 +1722,7 @@ window.addEventListener('load', () => {
   $('reload').addEventListener('click', () => {
     if (view === 'home' || view === 'lop') loadAll(); else if (view === 'moves') loadMoves();
     else if (view === 'cal') loadCal(true).then(() => loadSchedule(true));
+    else if (view === 'tutor') loadTutor(true);
     else if (cur) openClass(cur.tab, true);
   });
   $('btnCal').addEventListener('click', openCal);
@@ -1563,13 +1734,14 @@ window.addEventListener('load', () => {
   $('thiepDong').addEventListener('click', () => $('thiepDlg').close());
   applyTheme();
   $('btnTheme').addEventListener('click', () => { const next = document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark'; store.set('hp_theme', next); applyTheme(next); });
+  $('navTutor').addEventListener('click', openTutor);
   $('navNguoi').addEventListener('click', () => { goTo('nguoi'); loadNguoi(); });
   $('btnOut').addEventListener('click', () => {
     if (pending.length && !confirm('Còn ' + pending.length + ' lần tick chưa lưu sẽ bị bỏ. Vẫn đăng xuất?')) return;
     if (linkKey && !confirm('Thoát trên máy này? Muốn vào lại phải mở lại link riêng của bạn.')) return;
     if (token) google.accounts.oauth2.revoke(token, () => {});
     linkKey = ''; linkRole = ''; $('navNguoi').hidden = true;
-    token = null; pending = []; cal = null; sched = null; khoMemo = null; who = ''; sentRows = []; sentIdx = {}; sentQueue = []; ackMap = {}; bookDraft = null;
+    token = null; pending = []; cal = null; sched = null; khoMemo = null; who = ''; sentRows = []; sentIdx = {}; sentQueue = []; ackMap = {}; bookDraft = null; tutor = null;
     try { sessionStorage.removeItem('hp_token'); } catch (e) { /* nothing to clear */ }
     store.clear();
     showLogin(false);
@@ -1579,7 +1751,7 @@ window.addEventListener('load', () => {
   $('edHuy').addEventListener('click', () => $('sua').close());
   openStore().then(() => {
     applyTheme(store.get('hp_theme'));
-    pending = store.get(QKEY) || []; cal = store.get('hp_cal'); sched = store.get('hp_sched'); restoreSent();
+    pending = store.get(QKEY) || []; cal = store.get('hp_cal'); sched = store.get('hp_sched'); tutor = store.get('hp_tutor'); restoreSent();
     const fromLink = (location.hash.match(/[#&]k=([\w-]{32,})/) || [])[1];
     if (fromLink) { store.set('hp_link', fromLink); history.replaceState(null, '', location.pathname); }
     linkKey = fromLink || store.get('hp_link') || '';
