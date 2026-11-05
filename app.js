@@ -165,7 +165,7 @@ function applyTheme(choice) {
   const phone = window.matchMedia('(max-width: 760px)').matches;
   const dark = choice ? choice === 'dark' : !phone && window.matchMedia('(prefers-color-scheme: dark)').matches;
   document.documentElement.dataset.theme = dark ? 'dark' : 'light';
-  const b = $('btnTheme'); if (b) b.textContent = dark ? 'Giao diện sáng' : 'Giao diện tối';
+  const b = $('btnTheme'); if (b) b.textContent = dark ? 'Nền sáng' : 'Nền tối';
 }
 async function openClass(name, force) {
   const seq = ++loadSeq;
