@@ -142,11 +142,12 @@ function setCurrent(data, at, fresh) {
   render();
 }
 // The saved copy shows at once, so a click never waits on the Sheet; a copy older than FRESH_MS is replaced quietly when the read returns.
+const cuCu = c => c.data.items.length > 0 && !('disc' in c.data.items[0]);
 async function openClass(name, force) {
   const seq = ++loadSeq;
   view = 'class'; step = 0;
   store.set('hp_last_class', name); $('lop').value = name;
-  const cached = store.get('hp_cls_' + name), fresh = !!cached && !cached.dirty && !!cached.data.history && Date.now() - cached.at < FRESH_MS;
+  const cached = store.get('hp_cls_' + name), fresh = !!cached && !cached.dirty && !!cached.data.history && !cuCu(cached) && Date.now() - cached.at < FRESH_MS;
   if (cached) { i = 0; setCurrent(cached.data, cached.at, fresh); }
   else { cur = null; render(); notice('Đang đọc ' + name + ' lần đầu…'); }
   if (cached) warmCurrent();
@@ -185,7 +186,7 @@ const homeBusy = () => document.activeElement && document.activeElement.classLis
 async function loadAll(auto) {
   if (loadingAll) return;
   const rank = n => { const x = cal && cal.list.find(c => c.tab === n); return x && /den|qua/.test(x.group) ? 0 : x && x.group === 'sap' ? 1 : 2; };
-  const old = n => { const c = store.get('hp_cls_' + n); return !c || c.dirty || !c.data.history || Date.now() - c.at > 1800000; };
+  const old = n => { const c = store.get('hp_cls_' + n); return !c || c.dirty || !c.data.history || cuCu(c) || Date.now() - c.at > 1800000; };
   const names = (auto ? classes.filter(old) : classes.slice()).sort((a, b) => rank(a) - rank(b));
   if (!names.length) return;
   loadingAll = true; loadedCount = 0; loadTotal = names.length; if (!homeBusy()) render();
@@ -441,14 +442,17 @@ function nhacHomNay() {
   const today = L.dayNow(new Date());
   if (store.get('hp_nhac_an') === today) return null;
   const rows = nhacLaiRows().map(c => ({ tab: c.data.tab, list: c.list.filter(r => r.onCycle) })).filter(c => c.list.length);
-  if (!rows.length) return null;
+  const unticked = chuaDanhDau().filter(r => r.left);
+  if (!rows.length && !unticked.length) return null;
   const all = rows.reduce((n, c) => n + c.list.length, 0), blank = rows.reduce((n, c) => n + c.list.filter(r => r.blank).length, 0);
-  const openThu = name => { tab = 'thu'; filter = 'xem'; openClass(name); };
+  const openAt = (name, t, f) => () => { tab = t; filter = f; openClass(name); if (t === 'zalo') loadSent(); };
+  const buttons = list => el('div', { style: 'display:flex;flex-wrap:wrap;gap:6px;margin:8px 0' }, list);
   return el('div', { class: 'notice warn', role: 'status', id: 'nhacHomNay' }, [
-    el('b', { textContent: 'Hôm nay đến lượt nhắc ' + all + ' em' }),
-    el('span', { textContent: ' (' + (all - blank) + ' chưa nộp, ' + blank + ' chưa ghi). Bấm vào lớp để xem:' }),
-    el('div', { style: 'display:flex;flex-wrap:wrap;gap:6px;margin-top:8px' }, rows.map(c => el('button', { class: 'quiet', textContent: c.tab + ' (' + c.list.length + ')', onclick: () => openThu(c.tab) }))
-      .concat(el('button', { class: 'quiet', textContent: 'Để sau', onclick: () => { store.set('hp_nhac_an', today); renderNotices(); } })))]);
+    unticked.length ? el('div', {}, [el('b', { textContent: 'Chưa tick đã gửi Zalo: ' + unticked.reduce((n, r) => n + r.left.length, 0) + ' em.' }), el('span', { textContent: ' Bấm vào lớp để rà soát:' }),
+      buttons(unticked.map(r => el('button', { class: 'quiet', textContent: r.x.tab + ' (' + r.left.length + ')', onclick: openAt(r.x.tab, 'zalo', 'can') })))]) : '',
+    rows.length ? el('div', {}, [el('b', { textContent: 'Hôm nay đến lượt nhắc ' + all + ' em' }), el('span', { textContent: ' (' + (all - blank) + ' chưa nộp, ' + blank + ' chưa ghi). Bấm vào lớp để xem:' }),
+      buttons(rows.map(c => el('button', { class: 'quiet', textContent: c.tab + ' (' + c.list.length + ')', onclick: openAt(c.tab, 'thu', 'xem') })))]) : '',
+    el('button', { class: 'quiet', textContent: 'Để sau', onclick: () => { store.set('hp_nhac_an', today); renderNotices(); } })]);
 }
 function showLogin(again) {
   // Mid-work the page stays up: the next click renews the sign-in, and unsaved ticks wait in their queue.
@@ -467,7 +471,7 @@ function render() {
   if (view === 'home') renderHome(box); else if (view === 'lop') renderLop(box); else if (view === 'moves') renderMoves(box); else if (view === 'cal') renderCal(box); else renderClass(box);
   const n = moves ? moves.list.filter(m => !m.wait).length + moves.due.length : 0;
   $('btnMoves').textContent = n ? 'Biến động (' + n + ')' : 'Biến động';
-  const dueNow = cal ? cal.list.filter(x => x.group === 'den' || x.group === 'qua').length : 0;
+  const dueNow = cal ? cal.list.filter(x => (x.group === 'den' || x.group === 'qua') && !daGuiHet(x)).length : 0;
   $('btnCal').textContent = dueNow ? 'Lịch thu (' + dueNow + ')' : 'Lịch thu';
   renderNotices();
 }
@@ -653,10 +657,13 @@ function renderCal(box) {
   }
   if (cal.synced) lines.push(el('div', { class: /LỖI|đầy/.test(cal.synced) ? 'notice warn' : 'notice', textContent: 'Ngày nghỉ lấy từ Schedule mỗi sáng. Lần đọc cuối ' + cal.synced }));
   if (lines.length) box.append(el('div', { class: 'notices' }, lines));
+  const waiting = x => x.group === 'chua' || !daGuiHet(x);
   [['den', 'Đến hạn thu'], ['qua', 'Đã qua ngày cuối đợt'], ['sap', 'Sắp thu'], ['chua', 'Chưa đến']].forEach(([id, title]) => {
-    const list = cal.list.filter(x => x.group === id);
+    const list = cal.list.filter(x => x.group === id && waiting(x));
     if (list.length) box.append(el('h2', { class: 'section', textContent: title + ' (' + list.length + ')' }), el('div', { class: 'classes' }, list.map(calRow)));
   });
+  const sentList = cal.list.filter(x => !waiting(x));
+  if (sentList.length) box.append(el('h2', { class: 'section', textContent: 'Đã gửi tin (' + sentList.length + ')' }), el('div', { class: 'classes' }, sentList.map(calRow)));
 }
 
 /* ---------- Student movements: new, transfer, leaving ---------- */
@@ -870,10 +877,25 @@ const dueCls = it => it.cls || it.tab;
 const dueMark = it => (sentIdx[dueCls(it) + '|' + DUE_DOT] || {})[it.key];
 /** Classes due for collection with someone not ticked as sent. left is null until the class has been read. */
 function chuaDanhDau() {
-  return (cal ? cal.list : []).filter(x => (x.group === 'den' || x.group === 'qua') && !ackMap[L.ackKey(x.tab, x.dot)]).map(x => {
-    const c = store.get('hp_cls_' + x.tab), unpaid = c && String(c.data.dot) === x.dot ? c.data.items.filter(canThu) : null;
-    return { x, total: unpaid ? unpaid.length : 0, left: unpaid ? L.notMarked(unpaid, sentIdx[x.tab + '|' + x.dot]) : null };
-  }).filter(r => !r.left || r.left.length);
+  const out = [], calOf = name => (cal ? cal.list : []).find(x => x.tab === name), dueNow = x => x.group === 'den' || x.group === 'qua';
+  classes.forEach(name => {
+    const c = store.get('hp_cls_' + name), x = calOf(name);
+    if (!c) { if (x && dueNow(x) && !ackMap[L.ackKey(x.tab, x.dot)]) out.push({ x, total: 0, left: null }); return; }
+    // The class's own đợt: one the calendar has not called due yet is not late, an older one still running is.
+    const dot = String(c.data.dot), same = x && x.dot === dot ? x : null;
+    if ((same && !dueNow(same)) || ackMap[L.ackKey(name, dot)]) return;
+    const unpaid = phaiGui(c.data), left = L.notMarked(unpaid, sentIdx[name + '|' + dot]);
+    if (left.length) out.push({ x: { tab: name, dot, due: same ? same.due : ackDue[L.ackKey(name, dot)] || '' }, total: unpaid.length, left });
+  });
+  return out;
+}
+/** Students a message should have gone to: owing, with something to say to them. */
+const phaiGui = data => data.items.filter(y => canThu(y) && !y.trong && y.amount > 0);
+/** Ticked as sent, for the class or for everyone still owing: this đợt needs nothing more from the top of the page. */
+function daGuiHet(x) {
+  if (ackMap[L.ackKey(x.tab, x.dot)]) return true;
+  const c = store.get('hp_cls_' + x.tab);
+  return !!c && String(c.data.dot) === x.dot && !L.notMarked(phaiGui(c.data), sentIdx[x.tab + '|' + x.dot]).length;
 }
 /** Who to remind again in one class: on the class's own đợt, so a class that has rolled over still counts. */
 function nhacCua(data) {
@@ -905,20 +927,23 @@ function nhacLaiPanel(rows) {
 }
 function nhacPanel(rows, due) {
   const line = r => el('div', { class: 'row card' }, [
-    el('div', { class: 'r1' }, [el('span', { class: 'nm', textContent: r.x.tab }), el('span', { class: 'sub', textContent: 'Thu đợt ' + r.x.dot + ', hạn ' + r.x.due })]),
-    el('div', { class: 'sub', style: 'margin-top:4px', textContent: !r.left ? 'Chưa tick đã gửi cả lớp.' : r.left.length === r.total ? 'Chưa đánh dấu em nào (' + r.total + ' em chưa nộp).' : 'Còn ' + r.left.length + '/' + r.total + ' em chưa đánh dấu: ' + r.left.map(y => y.eng || y.name).join(', ') + '.' }),
-    el('div', { class: 'r2' }, [el('div', { class: 'fill' }), el('button', { class: 'act', textContent: 'Mở Gửi Zalo', onclick: () => { tab = 'zalo'; filter = 'can'; openClass(r.x.tab); loadSent(); } })])]);
+    el('div', { class: 'r1' }, [el('span', { class: 'nm', textContent: r.x.tab }), el('span', { class: 'sub', textContent: 'Thu đợt ' + r.x.dot + (r.x.due ? ', hạn ' + r.x.due : '') })]),
+    el('div', { class: 'sub', style: 'margin-top:4px', textContent: !r.left ? 'Chưa tick đã gửi cả lớp.' : r.left.length + '/' + r.total + ' em chưa tick: ' + r.left.map(y => fullName(y) + (chuaGhi(y) ? ' (chưa ghi nộp)' : '')).join(', ') + '.' }),
+    el('div', { class: 'r2' }, [el('div', { class: 'fill' }),
+      el('button', { class: 'quiet', textContent: 'Đã gửi cả lớp', onclick: () => { if (confirm('Ghi đã gửi tin đợt ' + r.x.dot + ' cho cả lớp ' + r.x.tab + '?')) markClass(r.x.tab, r.x.dot, r.x.due, true); } }),
+      el('button', { class: 'act', textContent: 'Mở Gửi Zalo', onclick: () => { tab = 'zalo'; filter = 'can'; openClass(r.x.tab); loadSent(); } })])]);
   const dueLine = it => el('div', { class: 'row card' }, [
     el('div', { class: 'r1' }, [el('span', { class: 'nm', textContent: fullName(it) }), el('span', { class: 'sub', textContent: KIND[it.kind] + ' · ' + it.cls })]),
     el('div', { class: 'r2' }, [el('div', { class: 'fill' }), el('button', { class: 'act', textContent: 'Xem ở Biến động', onclick: () => goTo('moves') })])]);
-  return [el('h2', { class: 'section', id: 'nhacGui', textContent: 'Xem lại kẻo sót: chưa đánh dấu đã gửi Zalo (' + (rows.length + due.length) + ')' }),
+  return [el('h2', { class: 'section', id: 'nhacGui', textContent: 'Rà soát: chưa tick đã gửi Zalo (' + rows.reduce((n, r) => n + (r.left ? r.left.length : 0), 0) + ' em ở ' + rows.length + ' lớp' + (due.length ? ', ' + due.length + ' dòng Biến động' : '') + ')' }),
     el('p', { class: 'sub', style: 'margin-bottom:8px', textContent: 'Đã gửi rồi thì tick để hết nhắc. Chưa gửi thì mở lớp gửi nốt.' }),
     el('div', { class: 'fee-list' }, rows.map(line).concat(due.map(dueLine)))];
 }
 function renderHome(box) {
   const known = classRows().filter(r => r.data).map(r => summarize(r.data)), add = f => known.reduce((n, s) => n + f(s), 0);
   const blankAll = add(s => s.blank), blankOwe = add(s => s.blankOwe), owe = add(s => s.owe), flagged = add(s => s.warn);
-  const list = cal ? cal.list : [], now = list.filter(x => x.group === 'den' || x.group === 'qua'), soon = list.filter(x => x.group === 'sap');
+  const list = cal ? cal.list : [], allNow = list.filter(x => x.group === 'den' || x.group === 'qua'), allSoon = list.filter(x => x.group === 'sap');
+  const now = allNow.filter(x => !daGuiHet(x)), soon = allSoon.filter(x => !daGuiHet(x)), sentDone = allNow.concat(allSoon).filter(daGuiHet);
   const nhacLai = sentAt || sentRows.length ? nhacLaiRows() : [];
   const notSent = chuaDanhDau(), dueUnsent = moves ? moves.due.filter(it => !it.problem && !dueMark(it)) : [], moveCount = moves ? moves.list.filter(m => !m.wait).length + moves.due.length : 0;
   box.append(
@@ -926,17 +951,18 @@ function renderHome(box) {
       el('div', {}, [el('h1', { textContent: 'Việc cần làm' }), el('div', { class: 'sub', textContent: updatedText() })]), updateButton()]),
     el('div', { class: 'tiles' }, [
       tile(now.length, 'Lớp đến hạn thu', true, openCal),
-      tile(notSent.length + dueUnsent.length, 'Chưa đánh dấu đã gửi', true, () => { const s = $('nhacGui'); if (s) s.scrollIntoView({ behavior: 'smooth' }); }),
+      tile(notSent.reduce((n, r) => n + (r.left ? r.left.length : 1), 0) + dueUnsent.length, 'Chưa tick đã gửi Zalo', true, () => { const s = $('nhacGui'); if (s) s.scrollIntoView({ behavior: 'smooth' }); }),
       tile(nhacLai.reduce((n, c) => n + c.list.length, 0), 'Gửi quá ' + L.REMIND_AFTER + ' ngày chưa thấy nộp', true, () => { const s = $('nhacLai'); if (s) s.scrollIntoView({ behavior: 'smooth' }); }),
       tile(soon.length, 'Lớp sắp thu', false, openCal),
       tile(blankAll, 'Em chưa ghi nộp', false, () => { lopFilter = 'ghi'; goTo('lop'); }),
       tile(moveCount, 'Biến động cần xử lý', true, () => { goTo('moves'); if (!moves || Date.now() - moves.at > FRESH_MS) loadMoves(); })]),
     el('div', { class: 'stats' }, [stat(L.fmt(owe - blankOwe) + ' đ', 'Đã rõ chưa nộp'), stat(L.fmt(blankOwe) + ' đ', 'Chưa ghi, có thể đã nộp'), stat(String(flagged), 'Số tiền cần xem lại', flagged > 0)]));
-  if (nhacLai.length) box.append(...nhacLaiPanel(nhacLai));
   if (notSent.length || dueUnsent.length) box.append(...nhacPanel(notSent, dueUnsent));
+  if (nhacLai.length) box.append(...nhacLaiPanel(nhacLai));
   if (now.length) box.append(el('h2', { class: 'section', id: 'canLam', textContent: 'Đến hạn thu (' + now.length + ')' }), el('div', { class: 'classes' }, now.map(calRow)));
   if (soon.length) box.append(el('h2', { class: 'section', textContent: 'Sắp thu (' + soon.length + ')' }), el('div', { class: 'classes' }, soon.map(calRow)));
-  if (!now.length && !soon.length) box.append(el('div', { class: 'empty', textContent: cal ? 'Chưa có lớp nào đến hạn hoặc sắp thu.' : 'Đang đọc lịch thu…' }));
+  if (!now.length && !soon.length) box.append(el('div', { class: 'empty', textContent: cal ? 'Không còn lớp nào đang chờ gửi tin.' : 'Đang đọc lịch thu…' }));
+  if (sentDone.length) box.append(el('details', { class: 'hist' }, [el('summary', { textContent: 'Đã gửi tin (' + sentDone.length + ' lớp)' }), el('div', { class: 'classes' }, sentDone.map(calRow))]));
 }
 let lopFilter = 'all';
 function renderLop(box) {
@@ -1026,6 +1052,10 @@ function renderDot(box) {
     el('div', { class: 'sub', textContent: useSchedule ? 'Theo Schedule đến tuần ' + L.dayText(sched.last) + '. Chữ nghiêng là dự kiến.' : 'Đang đối chiếu Schedule, tạm hiện ngày dự kiến của file.' }),
     off.length ? el('div', { class: 'sub', textContent: 'Schedule ghi nghỉ: ' + off.map(d => L.dayText(d).slice(0, 5)).join(', ') }) : '']));
   box.append(bookPanel(), historyPanel(), sentPanel());
+  const mien = cur.items.filter(L.free);
+  if (mien.length) box.append(el('div', { class: 'card panel' }, [el('h2', { class: 'panel-title', textContent: 'Em miễn học phí' }),
+    el('div', { class: 'sub', textContent: 'Các em này không tính, không đếm, không gửi tin ở đâu cả. Đổi mức ở đây nếu không còn miễn.' }),
+    ...mien.map(it => el('div', { style: 'margin-top:8px' }, [el('b', { textContent: fullName(it) }), discLine(it)]))]));
 }
 function bookPanel() {
   const draft = bookDraft && bookDraft.tab === cur.tab ? bookDraft.list : cur.books.slice();
@@ -1073,13 +1103,13 @@ function sentPanel() {
 }
 
 function renderThu(box) {
-  const groups = { can: cur.items.filter(canThu), ghi: cur.items.filter(chuaGhi), da: cur.items.filter(daThu), hoan: cur.items.filter(x => L.deferred(x) && !L.free(x)), mien: cur.items.filter(L.free), xem: cur.items.filter(x => canThu(x) && (x.warn || x.trong || x.gop || nhacOf(x))) };
-  if ((filter === 'hoan' && !groups.hoan.length) || (filter === 'mien' && !groups.mien.length)) filter = 'can';
+  const groups = { can: cur.items.filter(canThu), ghi: cur.items.filter(chuaGhi), da: cur.items.filter(daThu), hoan: cur.items.filter(x => L.deferred(x) && !L.free(x)), xem: cur.items.filter(x => canThu(x) && (x.warn || x.trong || x.gop || nhacOf(x))) };
+  if (filter === 'hoan' && !groups.hoan.length) filter = 'can';
   const chip = (id, label) => el('button', { textContent: label + ' ' + groups[id].length, 'aria-pressed': String(filter === id), onclick: () => { filter = id; render(); } });
   const before = cur.items.filter(x => x.prev && !L.free(x) && (x.prev.amount > 0 || x.prev.paid)).sort((a, b) => a.prev.paid - b.prev.paid);
   if (filter === 'truoc' && !before.length) filter = 'can';
   groups.truoc = before;
-  box.append(el('div', { class: 'filters' }, [chip('can', 'Chưa thu'), chip('ghi', 'Chưa ghi'), chip('xem', 'Cần xem lại'), chip('da', 'Đã nộp'), groups.hoan.length ? chip('hoan', 'Chưa thu ngay') : '', groups.mien.length ? el('button', { textContent: 'Miễn học phí', 'aria-pressed': String(filter === 'mien'), onclick: () => { filter = 'mien'; render(); } }) : '',
+  box.append(el('div', { class: 'filters' }, [chip('can', 'Chưa thu'), chip('ghi', 'Chưa ghi'), chip('xem', 'Cần xem lại'), chip('da', 'Đã nộp'), groups.hoan.length ? chip('hoan', 'Chưa thu ngay') : '',
     before.length ? el('button', { textContent: 'Đợt ' + before[0].prev.dot + ' chưa nộp ' + before.filter(x => !x.prev.paid).length, 'aria-pressed': String(filter === 'truoc'), onclick: () => { filter = 'truoc'; render(); } }) : '']));
   const list = groups[filter];
   if (!list.length) { box.append(el('div', { class: 'empty', textContent: filter === 'can' ? 'Lớp này đã nộp đủ đợt ' + cur.dot + '.' : filter === 'da' ? 'Chưa có em nào nộp đợt ' + cur.dot + '.' : filter === 'ghi' ? 'Không có em nào chưa ghi.' : 'Không có em nào cần xem lại.' })); return; }

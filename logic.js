@@ -403,15 +403,15 @@
     const add = (o) => {
       const amount = digits(o.amountText), problem = /CẦN KIỂM TRA/.test(o.amountText + ' ' + o.msg);
       // A payment date counts as paid even when the status cell is blank.
-      if (isPaid(o.status) || o.paidDate || /chưa thu ngay/i.test(o.status) || (!amount && !problem)) return;
+      if (isPaid(o.status) || o.paidDate || /chưa thu ngay/i.test(o.status) || free(o) || (!amount && !problem)) return;
       const tag = o.kind === 'moi' ? 'MOI' : o.kind === 'chuyen' ? 'CHUYEN' : 'NGHI';
       const info = String(o.cls).replace(/\s+/g, '') + ' ' + tag + ' ' + (o.eng || o.name);
       const reason = problem ? ((o.amountText + '\n' + o.msg).match(/CẦN KIỂM TRA:[^\n]*/) || [''])[0].replace('CẦN KIỂM TRA: ', '') : '';
       out.push(Object.assign(o, { amount: problem ? 0 : amount, problem, reason, key: o.tab + '|' + o.row, trong: false,
         qr: problem ? '' : qrFromMessage(o.msg, amount, info), msg: o.msg }));
     };
-    (newRows || []).forEach((r, i) => { if (r && r[2]) add({ tab: NEW_TAB, row: i + 3, kind: 'moi', cls: r[1], name: r[2], eng: r[3] || '', amountText: String(r[15] || ''), status: String(r[16] || ''), paidDate: String(r[17] || ''), msg: String(r[19] || ''), statusCol: 'Q', dateCol: 'R' }); });
-    (exitRows || []).forEach((r, i) => { if (r && r[1]) add({ tab: EXIT_TAB, row: i + 4, kind: r[5] === 'Chuyển lớp' ? 'chuyen' : 'nghi', cls: r[5] === 'Chuyển lớp' ? r[6] : r[23], name: r[1], eng: r[2] || '', amountText: String(r[10] || ''), status: String(r[9] || ''), paidDate: String(r[11] || ''), msg: String(r[12] || ''), statusCol: 'J', dateCol: 'L' }); });
+    (newRows || []).forEach((r, i) => { if (r && r[2]) add({ disc: r[5], tab: NEW_TAB, row: i + 3, kind: 'moi', cls: r[1], name: r[2], eng: r[3] || '', amountText: String(r[15] || ''), status: String(r[16] || ''), paidDate: String(r[17] || ''), msg: String(r[19] || ''), statusCol: 'Q', dateCol: 'R' }); });
+    (exitRows || []).forEach((r, i) => { if (r && r[1]) add({ disc: r[4], tab: EXIT_TAB, row: i + 4, kind: r[5] === 'Chuyển lớp' ? 'chuyen' : 'nghi', cls: r[5] === 'Chuyển lớp' ? r[6] : r[23], name: r[1], eng: r[2] || '', amountText: String(r[10] || ''), status: String(r[9] || ''), paidDate: String(r[11] || ''), msg: String(r[12] || ''), statusCol: 'J', dateCol: 'L' }); });
     return out;
   }
 
@@ -514,7 +514,7 @@
   /** The owner chose not to collect from this student this đợt, so nothing is due and nothing should nag. */
   const deferred = x => !x.paid && /chưa thu ngay|chua thu ngay/i.test(String(x.status || ''));
   /** Free tuition is never counted, whatever else the row says: the owner's rule. */
-  const free = x => /miễn|mien/i.test(String(x.disc || ''));
+  const free = x => /miễn|mien/i.test(String(x.disc || '').normalize('NFC'));
   /** The log writes "dd/mm hh:mm" with no year: it is the latest such date not after today. */
   function sentDay(at, today) {
     const m = String(at).match(/^(\d{1,2})\/(\d{1,2})/);
