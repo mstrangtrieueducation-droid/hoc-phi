@@ -1,4 +1,4 @@
-// Web app UI. All data comes from the Sheets API with the signed-in user's own Google permission; there is no server.
+// Web app UI. All data comes from the Sheets API, through the personal-link gateway (or the Google sign-in kept as a spare); there is no server.
 const CONFIG = window.HP_CONFIG;
 const SHEET_API = 'https://sheets.googleapis.com/v4/spreadsheets/' + CONFIG.sheetId;
 const SCHEDULE_API = 'https://sheets.googleapis.com/v4/spreadsheets/' + CONFIG.scheduleId;
@@ -41,6 +41,20 @@ function openStore() {
 }
 
 /* ---------- Sign-in ---------- */
+let linkKey = '', linkRole = '';
+/** A call to the gateway. Its only trust is the key from the person's link; a key that was removed gets auth:false. */
+async function cong(body) {
+  const r = await fetch(CONFIG.congUrl, { method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' }, body: JSON.stringify(Object.assign({ k: linkKey }, body)) });
+  if (!r.ok) throw new Error('Không nối được cổng (' + r.status + ').');
+  const d = await r.json();
+  if (d.auth === false) { linkGone(); throw new Error('Link này đã bị gỡ.'); }
+  if (d.error) throw new Error(d.error);
+  return d;
+}
+function linkGone() {
+  linkKey = ''; linkRole = ''; store.clear();
+  showLogin(false); $('loginMsg').textContent = 'Link này đã bị gỡ hoặc không đúng. Xin link mới từ cô Trang.';
+}
 let token = null, tokenUntil = 0, tokenClient = null, tokenWaiters = [], renewing = false, sessionLost = false;
 const RENEW_BEFORE = 15 * 60000;
 function initAuth() {
@@ -70,25 +84,26 @@ function askToken() { const hint = store.get('hp_email'); tokenClient.requestAcc
  */
 function renewOnClick(e) {
   const left = tokenUntil - Date.now(), on = e.target && e.target.closest ? e.target : document.body;
-  if (!tokenClient || renewing || $('app').hidden || left > RENEW_BEFORE || on.closest('#btnOut')) return;
+  if (linkKey || !tokenClient || renewing || $('app').hidden || left > RENEW_BEFORE || on.closest('#btnOut')) return;
   // Copying a card needs this page to keep focus, so that click leaves it to the next one unless time is already up.
   if (left > 0 && on.closest('#one, #thiepCopy, .copy')) return;
   renewing = true; askToken();
 }
 async function api(path, options, attempts) {
-  const t = await getToken(false);
+  const t = linkKey ? '' : await getToken(false);
   const o = Object.assign({}, options, { headers: Object.assign({ Authorization: 'Bearer ' + t, 'Content-Type': 'application/json' }, (options || {}).headers) });
   let last = null;
   for (let k = 0; k < (attempts || 3); k++) {
     if (k) await new Promise(r => setTimeout(r, 4000 * k));
     try {
-      const r = await fetch(path.startsWith('https:') ? path : SHEET_API + path, o);
+      const url = path.startsWith('https:') ? path : SHEET_API + path;
+      const r = linkKey ? await cong({ op: 'api', url, method: o.method || 'GET', body: o.body }).then(d => new Response(d.body, { status: d.status })) : await fetch(url, o);
       if (r.ok) return r.json();
       const body = await r.json().catch(() => ({}));
       if (r.status === 401) { token = null; showLogin(true); throw new Error('Cần đăng nhập lại.'); }
       last = new Error((body.error && body.error.message) || ('Lỗi ' + r.status));
       if (r.status < 500 && r.status !== 429) throw last;
-    } catch (e) { last = e; if (/đăng nhập/.test(e.message)) throw e; }
+    } catch (e) { last = e; if (/đăng nhập|bị gỡ/.test(e.message)) throw e; }
   }
   throw last;
 }
@@ -132,7 +147,7 @@ async function readClass(name) {
   const [parts, rows] = await Promise.all([batchGet(L.classRanges(name)), readKho()]);
   return buildFrom(name, parts, rows);
 }
-function warmCurrent() { if (cur && cur.items.length && token) warmUp(cur.tab, cur.items.map(x => x.row)); }
+function warmCurrent() { if (cur && cur.items.length && (token || linkKey)) warmUp(cur.tab, cur.items.map(x => x.row)); }
 function setCurrent(data, at, fresh) {
   const keepKey = cur && cur.tab === data.tab ? (zaloItems()[i] || {}).key : null;
   cur = data; curAt = at; curFresh = fresh; cards = {};
@@ -424,6 +439,37 @@ function el(tag, props, kids) {
   return e;
 }
 function notice(s, err) { noticeText = s; noticeErr = !!err; renderNotices(); }
+/* ---------- People with a link: only the owner sees this page, and the gateway checks it too ---------- */
+let nguoi = null, nguoiMoi = null, nguoiErr = '';
+async function loadNguoi() {
+  try { nguoi = (await cong({ op: 'nguoi' })).people; nguoiErr = ''; } catch (e) { nguoiErr = e.message; }
+  if (view === 'nguoi') render();
+}
+function renderNguoi(box) {
+  const ten = el('input', { placeholder: 'Tên người dùng, ví dụ Sơn', 'aria-label': 'Tên người dùng', maxlength: '40' }), msg = el('span', { class: 'sub', role: 'status', textContent: nguoiErr });
+  const them = async () => {
+    if (!ten.value.trim()) { msg.textContent = 'Hãy nhập tên.'; return; }
+    msg.textContent = 'Đang tạo…';
+    try { const d = await cong({ op: 'them', name: ten.value }); nguoiMoi = { name: d.name, link: location.origin + location.pathname + '#k=' + d.key }; await loadNguoi(); render(); }
+    catch (e) { msg.textContent = 'Không tạo được: ' + e.message; }
+  };
+  const xoa = async p => {
+    if (!confirm('Xoá ' + p.name + '? Link của ' + p.name + ' sẽ hết hiệu lực ngay.\nNếu người này còn quyền trên file Sheet thì nhớ gỡ cả ở đó.')) return;
+    try { await cong({ op: 'xoa', id: p.id }); nguoiMoi = null; await loadNguoi(); notice('Đã xoá ' + p.name + ', link đó không vào được nữa.'); }
+    catch (e) { notice('Không xoá được: ' + e.message, true); }
+  };
+  box.append(el('div', { class: 'page-title' }, [el('div', {}, [el('h1', { textContent: 'Người dùng' }), el('div', { class: 'sub', textContent: 'Mỗi người một link riêng, không cần đăng nhập. Xoá người là link đó hết hiệu lực.' })])]));
+  if (nguoiMoi) {
+    const copy = el('button', { class: 'act', textContent: 'Copy link', onclick: async () => { try { await navigator.clipboard.writeText(nguoiMoi.link); copy.textContent = 'Đã copy'; } catch (e) { copy.textContent = 'Không copy được, bôi đen để copy'; } } });
+    box.append(el('div', { class: 'card panel' }, [el('h2', { class: 'panel-title', textContent: 'Link của ' + nguoiMoi.name }),
+      el('div', { class: 'sub', textContent: 'Link chỉ hiện lần này. Gửi riêng cho ' + nguoiMoi.name + ', đừng dán vào nhóm. Ai có link là xem và sửa được học phí.' }),
+      el('div', { style: 'word-break:break-all;margin:8px 0;user-select:all', textContent: nguoiMoi.link }), copy]));
+  }
+  box.append(el('div', { class: 'card panel' }, [el('h2', { class: 'panel-title', textContent: 'Thêm người' }), el('div', { style: 'display:flex;flex-wrap:wrap;gap:8px;align-items:center' }, [ten, el('button', { class: 'act', textContent: 'Tạo link', onclick: them }), msg])]),
+    el('div', { class: 'card panel' }, [el('h2', { class: 'panel-title', textContent: 'Đang có link' }),
+      !nguoi ? el('div', { class: 'sub', textContent: 'Đang đọc…' }) : !nguoi.length ? el('div', { class: 'sub', textContent: 'Chưa cấp link cho ai.' })
+        : el('div', { class: 'fee-list' }, nguoi.map(p => el('div', { class: 'row card' }, [el('div', { class: 'r1' }, [el('span', { class: 'nm', textContent: p.name }), el('span', { class: 'sub', textContent: 'Cấp ngày ' + p.at })]), el('div', { class: 'r2' }, [el('div', { class: 'fill' }), el('button', { class: 'quiet', textContent: 'Xoá', onclick: () => xoa(p) })])])))]));
+}
 function renderNotices() {
   const box = $('notices'); box.replaceChildren();
   if (noticeText) box.append(el('div', { class: noticeErr ? 'notice err' : 'notice', role: 'status', textContent: noticeText }));
@@ -467,8 +513,8 @@ function showLogin(again) {
 function st(s, err) { const n = $('st'); if (n) { n.textContent = s; n.style.color = err ? 'var(--bad)' : 'var(--ok)'; } }
 function render() {
   const box = $('view'); box.replaceChildren();
-  [['navHome', 'home'], ['btnCal', 'cal'], ['navLop', 'lop'], ['btnMoves', 'moves']].forEach(([id, v]) => $(id).setAttribute('aria-current', String(view === v || (v === 'lop' && view === 'class'))));
-  if (view === 'home') renderHome(box); else if (view === 'lop') renderLop(box); else if (view === 'moves') renderMoves(box); else if (view === 'cal') renderCal(box); else renderClass(box);
+  [['navHome', 'home'], ['btnCal', 'cal'], ['navLop', 'lop'], ['btnMoves', 'moves'], ['navNguoi', 'nguoi']].forEach(([id, v]) => $(id).setAttribute('aria-current', String(view === v || (v === 'lop' && view === 'class'))));
+  if (view === 'nguoi') renderNguoi(box); else if (view === 'home') renderHome(box); else if (view === 'lop') renderLop(box); else if (view === 'moves') renderMoves(box); else if (view === 'cal') renderCal(box); else renderClass(box);
   const n = moves ? moves.list.filter(m => !m.wait).length + moves.due.length : 0;
   $('btnMoves').textContent = n ? 'Biến động (' + n + ')' : 'Biến động';
   const dueNow = cal ? cal.list.filter(x => (x.group === 'den' || x.group === 'qua') && !daGuiHet(x)).length : 0;
@@ -483,6 +529,10 @@ const sentOf = (tabName, dot, key) => { const c = sentIdx[tabName + '|' + dot]; 
 const sentText = s => (s.lan ? 'Đã nhắc lại lần ' + s.lan + ' ' : 'Đã gửi ') + s.at + (s.by ? ' · ' + s.by : '');
 function restoreSent() { sentQueue = store.get('hp_sentq') || []; sentRows = (store.get('hp_sentlog') || []).concat(sentQueue); sentIdx = L.sentIndex(sentRows); ackMap = store.get('hp_ack') || {}; ackDue = store.get('hp_ackdue') || {}; }
 async function loadWho() {
+  if (linkKey) {
+    try { const me = await cong({ op: 'ai' }); who = me.name; linkRole = me.role; $('navNguoi').hidden = linkRole !== 'chu'; } catch (e) { console.error(e.message); }
+    return;
+  }
   try {
     const r = await fetch('https://www.googleapis.com/oauth2/v3/userinfo', { headers: { Authorization: 'Bearer ' + token } });
     if (r.ok) { const u = await r.json(); if (u.email) { who = personName(u.email); store.set('hp_email', u.email); } }
@@ -528,7 +578,7 @@ async function flushSent() {
   renderNotices();
 }
 function markStudent(it, on) {
-  if (!cur) return;
+  if (!cur || L.free(it)) return;
   logSent(cur.tab, cur.dot, [it], on ? 'da-gui' : 'bo');
   render();
 }
@@ -1352,9 +1402,12 @@ window.addEventListener('load', () => {
   $('dvHuy').addEventListener('click', () => $('duyet').close());
   $('thiepCopy').addEventListener('click', copyThiep);
   $('thiepDong').addEventListener('click', () => $('thiepDlg').close());
+  $('navNguoi').addEventListener('click', () => { goTo('nguoi'); loadNguoi(); });
   $('btnOut').addEventListener('click', () => {
     if (pending.length && !confirm('Còn ' + pending.length + ' lần tick chưa lưu sẽ bị bỏ. Vẫn đăng xuất?')) return;
+    if (linkKey && !confirm('Thoát trên máy này? Muốn vào lại phải mở lại link riêng của bạn.')) return;
     if (token) google.accounts.oauth2.revoke(token, () => {});
+    linkKey = ''; linkRole = ''; $('navNguoi').hidden = true;
     token = null; pending = []; cal = null; sched = null; khoMemo = null; who = ''; sentRows = []; sentIdx = {}; sentQueue = []; ackMap = {}; bookDraft = null;
     try { sessionStorage.removeItem('hp_token'); } catch (e) { /* nothing to clear */ }
     store.clear();
@@ -1365,6 +1418,10 @@ window.addEventListener('load', () => {
   $('edHuy').addEventListener('click', () => $('sua').close());
   openStore().then(() => {
     pending = store.get(QKEY) || []; cal = store.get('hp_cal'); sched = store.get('hp_sched'); restoreSent();
+    const fromLink = (location.hash.match(/[#&]k=([\w-]{32,})/) || [])[1];
+    if (fromLink) { store.set('hp_link', fromLink); history.replaceState(null, '', location.pathname); }
+    linkKey = fromLink || store.get('hp_link') || '';
+    if (linkKey) { showLogin(false); return afterLogin(); }
     const wait = setInterval(() => { if (window.google && google.accounts) {
       clearInterval(wait); initAuth(); $('btnLogin').disabled = false;
       showLogin(false);

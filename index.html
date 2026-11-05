@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="robots" content="noindex">
 <meta name="theme-color" content="#0b5394">
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' https://accounts.google.com; connect-src https://sheets.googleapis.com https://www.googleapis.com https://img.vietqr.io https://oauth2.googleapis.com https://accounts.google.com; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline' https://accounts.google.com https://fonts.googleapis.com; font-src https://fonts.gstatic.com; frame-src https://accounts.google.com">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' https://accounts.google.com; connect-src https://script.google.com https://script.googleusercontent.com https://sheets.googleapis.com https://www.googleapis.com https://img.vietqr.io https://oauth2.googleapis.com https://accounts.google.com; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline' https://accounts.google.com https://fonts.googleapis.com; font-src https://fonts.gstatic.com; frame-src https://accounts.google.com">
 <title>Học phí</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -232,8 +232,9 @@
   <div class="login-box card">
     <div class="logo" aria-hidden="true">₫</div>
     <h1>Học phí</h1>
-    <p>Đăng nhập bằng tài khoản Google đang có quyền sửa file học phí.</p>
-    <button id="btnLogin" class="primary" disabled>Đăng nhập Google</button>
+    <p>Mở bằng link riêng cô Trang đã gửi cho bạn, không cần đăng nhập.</p>
+    <details style="margin-top:12px"><summary class="sub">Dự phòng: đăng nhập Google</summary>
+    <button id="btnLogin" class="primary" disabled style="margin-top:8px">Đăng nhập Google</button></details>
     <p id="loginMsg" role="status"></p>
   </div>
 </div>
@@ -246,6 +247,7 @@
         <button id="btnCal">Lịch thu</button>
         <button id="navLop">Các lớp</button>
         <button id="btnMoves">Biến động</button>
+        <button id="navNguoi" hidden>Người dùng</button>
       </nav>
       <div class="spacer"></div>
       <select id="lop" aria-label="Mở nhanh một lớp"></select>
