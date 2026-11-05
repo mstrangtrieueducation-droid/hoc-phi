@@ -431,9 +431,11 @@
     const fromDay = p.join && p.join > (p.days[0] || 0) ? p.join : p.days[0];
     const within = p.days.filter(d => d >= fromDay && d <= p.date);
     if (!p.days.length) return { error: 'Chưa có lịch buổi học của đợt này.' };
-    if (p.date < p.days[0] || p.date > p.days[p.days.length - 1]) return { error: 'Ngày nghỉ không nằm trong đợt ' + p.dot + ' (' + dayText(p.days[0]) + ' đến ' + dayText(p.days[p.days.length - 1]) + ').' };
+    // A date between two đợt has no lesson to count, so the owner says how many; the Sheet stops at the same place.
+    const typed = !(p.used === undefined || p.used === '');
+    if (!typed && (p.date < p.days[0] || p.date > p.days[p.days.length - 1])) return { error: 'Ngày nghỉ nằm ngoài đợt ' + p.dot + ' (' + dayText(p.days[0]) + ' đến ' + dayText(p.days[p.days.length - 1]) + '). Hãy nhập số buổi em đã học mà chưa đóng, chưa học buổi nào thì nhập 0.' };
     if (!(p.fee > 0) || !(p.sessions > 0)) return { error: 'Chưa đọc được học phí của lớp.' };
-    const used = p.used === undefined || p.used === '' ? within.length : Number(p.used);
+    const used = typed ? Number(p.used) : within.length;
     if (!Number.isInteger(used) || used < 0 || used > p.sessions) return { error: 'Số buổi phải từ 0 đến ' + p.sessions + '.' };
     const per = p.fee / p.sessions, tuition = Math.round(used * per), book = p.bookFee || 0;
     const cell = String(p.discCell === undefined || p.discCell === null ? '' : p.discCell).trim(), base = tuition + book;
@@ -446,7 +448,8 @@
     else return { error: 'Không đọc được ô giảm giá của dòng này, hãy mở Sheet kiểm tra.' };
     const total = Math.max(0, base - off), nm = p.name + (p.eng ? ' (' + p.eng + ')' : ''), two = n => ('0' + n).slice(-2);
     const msg = ['[THÔNG BÁO THU HỌC PHÍ]', 'LỚP ' + String(p.cls).toUpperCase(), '',
-      'Do con ' + nm + ' học đến hết ngày ' + dayText(p.date) + ', là buổi thứ ' + two(used) + ' của đợt học mới và xin dừng lớp, cô xin gửi Quý Phụ huynh thông tin học phí cần hoàn tất như sau:', '',
+      used ? 'Do con ' + nm + ' học đến hết ngày ' + dayText(p.date) + ', là buổi thứ ' + two(used) + ' của đợt học mới và xin dừng lớp, cô xin gửi Quý Phụ huynh thông tin học phí cần hoàn tất như sau:'
+        : 'Do con ' + nm + ' xin dừng lớp từ ngày ' + dayText(p.date) + ' và chưa học buổi nào của đợt học mới, cô xin gửi Quý Phụ huynh thông tin học phí cần hoàn tất như sau:', '',
       '- Học phí ' + two(used) + ' buổi: ' + fmt(tuition) + ' đồng'].concat(
       book > 0 ? ['- Tiền sách, tài liệu (' + p.bookList + '): ' + fmt(book) + ' đồng'] : [],
       off > 0 ? ['- Chiết khấu/điều chỉnh số tiền còn phải thu: ' + fmt(base - total) + ' đồng'] : [],

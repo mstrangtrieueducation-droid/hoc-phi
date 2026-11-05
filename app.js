@@ -805,8 +805,7 @@ function tinhPanel(it) {
   const used = el('input', { type: 'number', min: '0', max: String(t.input.sessions), value: String(t.input.used === undefined ? (bill.used === undefined ? '' : bill.used) : t.input.used), 'aria-label': 'Số buổi', style: 'width:80px', onchange: e => { t.input.used = e.target.value; render(); } });
   const kids = [el('h3', { class: 'panel-title', style: 'margin-top:10px', textContent: 'Tính theo Schedule, đợt ' + t.dot })];
   if (t.paid) kids.push(el('div', { class: 'warn-line', textContent: 'Bảng ghi em này đã đóng đợt ' + t.dot + ': đúng ra không thu học phí đợt này. Xem lại trước khi ghi.' }));
-  if (bill.error && t.input.used === undefined) kids.push(el('div', { class: 'warn-line', textContent: bill.error }));
-  else {
+  {
     kids.push(el('div', { style: 'display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin:6px 0' }, [el('label', { style: 'margin:0', textContent: 'Số buổi đã học' }), used, bill.used !== undefined && bill.used !== bill.counted ? el('span', { class: 'sub', textContent: 'Schedule đếm được ' + bill.counted + ' buổi' }) : '']));
     if (bill.error) kids.push(el('div', { class: 'warn-line', textContent: bill.error }));
     else kids.push(
