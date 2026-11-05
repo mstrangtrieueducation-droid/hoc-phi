@@ -244,6 +244,13 @@
     return up;
   }
 
+  /** The period's amount in the table and its ledger copy, when the owner chooses the worked-out figure over the one in the cell. */
+  function planAmount(tab, it, fresh, dot, amount) {
+    const p = periodCells(tab, it, fresh, dot), up = [{ range: p.lA1(1), values: [[Number(amount)]] }];
+    if (!isLet(p.vis(1))) up.push({ range: p.vA1(1), values: [[liveFormula(it.row, Number(amount))]] });
+    return up;
+  }
+
   /** Undo of planPaid: the amount stays because it is still what this student owes. */
   function planUnpaid(tab, it, fresh, dot) {
     // restore puts back a status the tick replaced, such as a typed "Chưa nộp".
@@ -609,5 +616,5 @@
     return (students || []).filter(x => !(marks && marks[x.key]));
   }
 
-  return { leaveBill, recentExits, blocksOf, free, deferred, remindDue, REMIND_AFTER, REMIND_EVERY, sentDay, notMarked, dayOf, dayText, dayNow, calendar, classKey, weekSessions, scheduleGaps, scheduleLessons, weekdays, ackKey, sentIndex, leaveStatus, classifyMoves, moveInputs, qrFromMessage, intakeDue, EXIT_ACCOUNT, NEW_TAB, EXIT_TAB, buildClass, dropGop, addGop, discInput, discText, discValue, planDiscount, locate, classRanges, freshRanges, freshAt, planPaid, planUnpaid, planOverride, findPeriodCol, colA1, quote, fmt, digits, clean, isPaid, todayText, ACTIVE };
+  return { planAmount, leaveBill, recentExits, blocksOf, free, deferred, remindDue, REMIND_AFTER, REMIND_EVERY, sentDay, notMarked, dayOf, dayText, dayNow, calendar, classKey, weekSessions, scheduleGaps, scheduleLessons, weekdays, ackKey, sentIndex, leaveStatus, classifyMoves, moveInputs, qrFromMessage, intakeDue, EXIT_ACCOUNT, NEW_TAB, EXIT_TAB, buildClass, dropGop, addGop, discInput, discText, discValue, planDiscount, locate, classRanges, freshRanges, freshAt, planPaid, planUnpaid, planOverride, findPeriodCol, colA1, quote, fmt, digits, clean, isPaid, todayText, ACTIVE };
 });
