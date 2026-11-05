@@ -87,7 +87,7 @@ function renewOnClick(e) {
   const left = tokenUntil - Date.now(), on = e.target && e.target.closest ? e.target : document.body;
   if (linkKey || !tokenClient || renewing || $('app').hidden || left > RENEW_BEFORE || on.closest('#btnOut')) return;
   // Copying a card needs this page to keep focus, so that click leaves it to the next one unless time is already up.
-  if (left > 0 && on.closest('#one, #thiepCopy, #thiepChu, .copy')) return;
+  if (left > 0 && on.closest('#one, #thiepCopy, .copy')) return;
   renewing = true; askToken();
 }
 async function api(path, options, attempts) {
@@ -748,9 +748,53 @@ async function loadMoves() {
       list: L.classifyMoves(events, news.map(r => [r[1], r[2], r[3]]), exits.map(r => [r[1], r[2], r[5], r[6], r[23]]), Date.now()),
       due: L.intakeDue(news, exits), at: Date.now()
     };
+    moves.events = events;
     notice('');
   } catch (e) { notice('Chưa đọc được biến động học sinh: ' + e.message, true); }
   movesLoading = false; render();
+  xemTheoTick();
+}
+/* ---------- The bill follows the newest paid tick in the class table ---------- */
+const tickOf = {};
+async function docTick(it) {
+  const q = L.quote(it.from), row = it.row;
+  const [heads, table, hist, cfg] = await batchGet([q + '!F382:BM382', q + '!B384:BM413', q + '!J18:N36', q + '!B5:B6']);
+  const [[cell]] = await batchGet([L.quote(it.tab) + '!E' + row], 'FORMULA');
+  const me = (table || []).find(r => L.clean(r[0]) === L.clean(it.name) && L.clean(r[1]) === L.clean(it.eng));
+  const ev = !me && (moves.events || []).filter(r => r[2] === 'ra' && r[1] === it.from && L.clean(r[3]) === L.clean(it.name)).pop();
+  const blocks = me ? L.blocksOf(heads, [me.slice(4)]) : ev ? L.parseBlocks(ev[8]) : null;
+  if (!blocks) return { unknown: true };
+  const status = L.tickStatus(hist, blocks, it.date);
+  return { status, bill: L.tickBill({ kind: it.kind, name: it.name, eng: it.eng, from: it.from, cls: it.cls, date: it.date, used: it.used, fee: L.digits((cfg[1] || [])[0]), sessions: Number(L.digits((cfg[0] || [])[0])), msg: it.msg, bookFee: it.bookFee, bookList: it.bookList, discCell: (cell || [])[0], status }) };
+}
+async function xemTheoTick() {
+  const rows = moves ? moves.due.filter(it => it.tab === L.EXIT_TAB && !it.problem && it.from && it.msg) : [];
+  for (const it of rows) {
+    try { tickOf[it.key] = await docTick(it); } catch (e) { tickOf[it.key] = { unknown: true }; }
+    if (view === 'moves') render();
+  }
+}
+function tickLine(it) {
+  const t = tickOf[it.key];
+  if (!t || !t.bill || (!t.bill.error && t.bill.total === it.amount)) return '';
+  const s = t.status, lan = s.last ? 'Tick nộp mới nhất là đợt ' + s.last.dot + (s.last.amount ? ' (' + s.last.amount + (s.last.date ? ', ngày ' + s.last.date : '') + ')' : '') : 'Chưa có lần tick nộp nào';
+  if (t.bill.error) return el('div', { class: 'warn-line' }, [lan + '. ' + t.bill.error]);
+  const msg = el('span', { class: 'sub', role: 'status' });
+  return el('div', { class: 'warn-line' }, [lan + ', đợt ' + s.dot + (s.covered ? ' đã đóng theo lần tick đó' : ' chưa tick') + ': số đúng là ' + L.fmt(t.bill.total) + ' đ, không phải ' + L.fmt(it.amount) + ' đ.',
+    el('details', { class: 'hist' }, [el('summary', { textContent: 'Xem tin nhắn mới' }), el('pre', { class: 'detail', textContent: t.bill.msg })]),
+    el('button', { class: 'primary', textContent: 'Tính lại theo tick', onclick: () => ghiTick(it, t.bill, msg) }), msg]);
+}
+async function ghiTick(it, bill, msg) {
+  if (!confirm('Ghi ' + fullName(it) + ': tổng ' + L.fmt(bill.total) + ' đ vào dòng ' + it.row + ' tab ' + it.tab + '?')) return;
+  msg.textContent = 'Đang lưu…';
+  const q = L.quote(it.tab);
+  try {
+    const [[name]] = await batchGet([q + '!B' + it.row]);
+    if (L.clean((name || [])[0]) !== L.clean(it.name)) throw new Error('Dòng ' + it.row + ' đã đổi học sinh, hãy tải lại.');
+    await batchWrite([['O', bill.tuition]].concat(bill.total > 0 ? [['M', bill.msg]] : []).map(([c, v]) => ({ range: q + '!' + c + it.row, values: [[v]] })));
+    delete tickOf[it.key]; await loadMoves();
+    notice('Đã tính lại ' + it.name + ': ' + L.fmt(bill.total) + ' đ.');
+  } catch (e) { msg.textContent = 'Không lưu được: ' + e.message; }
 }
 function renderMoves(box) {
   box.append(el('div', { class: 'page-title' }, [
@@ -848,6 +892,7 @@ function dueRow(it) {
     it.problem ? el('div', { class: 'warn-line' }, ['Sheet chưa tính được số tiền (tab ' + it.tab + ', dòng ' + it.row + '): ' + (it.reason || 'bạn mở Sheet kiểm tra.'),
       it.kind === 'nghi' && !(tinh && tinh.key === it.key) ? el('button', { class: 'quiet', textContent: 'Tính theo Schedule', onclick: () => moTinh(it) }) : '']) : '',
     it.problem && tinh && tinh.key === it.key ? tinhPanel(it) : '',
+    it.problem ? '' : tickLine(it),
     it.problem ? ''
       : el('div', { class: 'r2' }, [el('button', { textContent: 'Xem thiệp', disabled: !it.qr, onclick: () => moThiep(it) }),
         el('label', { class: 'ack', style: 'margin:0' }, [el('input', { type: 'checkbox', checked: !!dueMark(it), onchange: e => { logSent(dueCls(it), DUE_DOT, [it], e.target.checked ? 'da-gui' : 'bo'); render(); } }), dueMark(it) ? sentText(dueMark(it)) : 'Đã gửi tin']),
@@ -860,11 +905,6 @@ function moThiep(it) {
   thiep(it).then(b => { img.src = URL.createObjectURL(b); }).catch(e => { $('thiepSt').textContent = 'Không tạo được thiệp: ' + e.message; });
 }
 const thiepDangMo = () => { const key = $('thiepDlg').dataset.key; return (moves && moves.due.find(x => x.key === key)) || (tutor && !tutor.error && tutorMonthItems(key.split('|')[1] || '').find(x => x.key === key)); };
-async function copyChuThiep() {
-  const it = thiepDangMo(); if (!it) return;
-  try { await navigator.clipboard.writeText(it.msg + (it.qr ? '\n\nMã QR chuyển khoản: ' + it.qr : '')); $('thiepSt').textContent = 'Đã copy chữ, sang Zalo dán rồi gửi.'; }
-  catch (e) { $('thiepSt').textContent = 'Không copy được chữ.'; }
-}
 async function copyThiep() {
   const it = thiepDangMo(); if (!it) return;
   try { await navigator.clipboard.write([new ClipboardItem({ 'image/png': thiep(it) })]); $('thiepSt').textContent = 'Đã copy thiệp, sang Zalo dán rồi gửi.'; }
@@ -1345,7 +1385,7 @@ function tutorActions(it, nhac) {
   const date = el('input', { type: 'date', 'aria-label': 'Ngày nộp', value: new Date(today * 86400000).toISOString().slice(0, 10) });
   const copied = tutorCopied === it.key && !it.sentAt;
   const markSent = () => { tutorCopied = ''; if (tutorFilter === 'gui') tutorTiep(it); tutorLuu(it, { sentAt: L.dayText(today), by: who }); };
-  if (it.qr) acts.push(el('button', { class: it.sentAt ? '' : 'primary', textContent: copied ? (tutorFilter === 'gui' ? 'Đã gửi, sang em tiếp' : 'Đã gửi') : 'Copy thiệp', onclick: () => copied ? markSent() : tutorCopy(it) }), copied ? el('button', { textContent: 'Copy lại', onclick: () => tutorCopy(it) }) : '', el('button', { textContent: 'Copy chữ và QR', onclick: () => navigator.clipboard.writeText(it.msg + '\n\nMã QR chuyển khoản: ' + it.qr).then(() => notice('Đã copy tin của ' + it.name + '.'), () => notice('Không copy được.', true)) }));
+  if (it.qr) acts.push(el('button', { class: it.sentAt ? '' : 'primary', textContent: copied ? (tutorFilter === 'gui' ? 'Đã gửi, sang em tiếp' : 'Đã gửi') : 'Copy thiệp', onclick: () => copied ? markSent() : tutorCopy(it) }), copied ? el('button', { textContent: 'Copy lại', onclick: () => tutorCopy(it) }) : '');
   if (!it.sentAt) { if (!copied) acts.push(el('button', { class: 'act', textContent: 'Đánh dấu đã gửi', onclick: markSent })); }
   else if (nhac) acts.push(el('button', { class: 'act', textContent: 'Đã nhắc lại', onclick: () => { if (tutorFilter === 'nhac') tutorTiep(it); tutorLuu(it, { sentAt: L.dayText(today), lan: it.lan + 1, by: who }); } }));
   acts.push(el('span', { class: 'tt-pay' }, [date, el('button', { class: 'act', textContent: 'Đã nộp', onclick: () => { tutorTiep(it); tutorLuu(it, { paid: date.value.split('-').reverse().join('/') }); } })]));
@@ -1823,7 +1863,6 @@ window.addEventListener('load', () => {
   $('dvKhongThu').addEventListener('click', khongThuMove);
   $('dvHuy').addEventListener('click', () => $('duyet').close());
   $('thiepCopy').addEventListener('click', copyThiep);
-  $('thiepChu').addEventListener('click', copyChuThiep);
   $('thiepDong').addEventListener('click', () => $('thiepDlg').close());
   applyTheme();
   $('btnTheme').addEventListener('click', () => { const next = document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark'; store.set('hp_theme', next); applyTheme(next); });
