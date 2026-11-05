@@ -427,6 +427,8 @@
     const out = [];
     const add = (o) => {
       const amount = digits(o.amountText), problem = /CẦN KIỂM TRA/.test(o.amountText + ' ' + o.msg);
+      // Tuition set to 0 because it was already paid, no books: nothing to collect, whatever the schedule check says.
+      if (o.noFee && !amount) return;
       // A payment date counts as paid even when the status cell is blank.
       if (isPaid(o.status) || o.paidDate || /chưa thu ngay/i.test(o.status) || free(o) || (!amount && !problem)) return;
       const tag = o.kind === 'moi' ? 'MOI' : o.kind === 'chuyen' ? 'CHUYEN' : 'NGHI';
@@ -436,7 +438,7 @@
         qr: problem ? '' : qrFromMessage(o.msg, amount, info), msg: o.msg }));
     };
     (newRows || []).forEach((r, i) => { if (r && r[2]) add({ disc: r[5], tab: NEW_TAB, row: i + 3, kind: 'moi', cls: r[1], name: r[2], eng: r[3] || '', amountText: String(r[15] || ''), status: String(r[16] || ''), paidDate: String(r[17] || ''), msg: String(r[19] || ''), statusCol: 'Q', dateCol: 'R' }); });
-    (exitRows || []).forEach((r, i) => { if (r && r[1]) add({ disc: r[4], tab: EXIT_TAB, row: i + 4, kind: r[5] === 'Chuyển lớp' ? 'chuyen' : 'nghi', cls: r[5] === 'Chuyển lớp' ? r[6] : r[23], name: r[1], eng: r[2] || '', amountText: String(r[10] || ''), status: String(r[9] || ''), paidDate: String(r[11] || ''), msg: String(r[12] || ''), statusCol: 'J', dateCol: 'L' }); });
+    (exitRows || []).forEach((r, i) => { if (r && r[1]) add({ noFee: String(r[14]).trim() === '0', disc: r[4], tab: EXIT_TAB, row: i + 4, kind: r[5] === 'Chuyển lớp' ? 'chuyen' : 'nghi', cls: r[5] === 'Chuyển lớp' ? r[6] : r[23], name: r[1], eng: r[2] || '', amountText: String(r[10] || ''), status: String(r[9] || ''), paidDate: String(r[11] || ''), msg: String(r[12] || ''), statusCol: 'J', dateCol: 'L' }); });
     return out;
   }
 
