@@ -1084,7 +1084,7 @@ const ngayNgan = n => L.dayText(n).slice(0, 5);
 const nhacText = r => (r.guess ? 'từ hạn thu ' : r.lan ? 'nhắc lần ' + r.lan + ' ' : 'gửi ') + ngayNgan(r.from) + ', ' + r.days + ' ngày';
 function nhacLaiPanel(rows) {
   const names = list => el('div', { class: 'names' }, list.map(r => el('span', { class: r.onCycle ? 'name due' : 'name', title: nhacText(r) }, [fullName(r.item), el('small', { textContent: nhacText(r) })])));
-  const plain = list => el('div', { class: 'names' }, list.map(r => el('span', { class: r.onCycle ? 'name due' : 'name', textContent: r.item.eng || r.item.name })));
+  const plain = list => el('div', { class: 'names' }, list.map(r => el('span', { class: r.onCycle ? 'name due' : 'name', textContent: fullName(r.item) })));
   const line = c => {
     const clear = c.list.filter(r => !r.blank), dated = c.list.filter(r => r.blank && !r.guess), old = c.list.filter(r => r.blank && r.guess);
     return el('div', { class: 'row card' }, [
@@ -1299,7 +1299,7 @@ function sentPanel() {
   return el('div', { class: 'card panel' }, [el('h2', { class: 'panel-title', textContent: 'Lịch sử gửi Zalo đợt ' + cur.dot }),
     groups.length ? el('div', { class: 'sent-log' }, groups.map(g => el('div', { class: 'sent-row' }, [
       el('div', { class: 'sub', textContent: g.at + (g.by ? ' · ' + g.by : '') }),
-      el('div', {}, [el('b', { textContent: g.word + ' ' }), g.names.map(r => r[4] || r[3]).join(', ')])])))
+      el('div', {}, [el('b', { textContent: g.word + ' ' }), g.names.map(r => r[3] + (r[4] ? ' (' + r[4] + ')' : '')).join(', ')])])))
       : el('div', { class: 'sub', textContent: 'Chưa ai đánh dấu đã gửi.' })]);
 }
 
