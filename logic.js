@@ -422,6 +422,40 @@
     return out;
   }
 
+  /**
+   * The bill for a leaver the Sheet cannot price because the running đợt has no saved lesson list: lessons from the Schedule,
+   * the same words and sums as the leaver formula. It reads the row's E cell as that formula does, and refuses any E it cannot read.
+   * in: { days, date, join, fee, sessions, bookFee, bookList, discCell, name, eng, cls, account, dot, used }
+   */
+  function leaveBill(p) {
+    const fromDay = p.join && p.join > (p.days[0] || 0) ? p.join : p.days[0];
+    const within = p.days.filter(d => d >= fromDay && d <= p.date);
+    if (!p.days.length) return { error: 'Chưa có lịch buổi học của đợt này.' };
+    if (p.date < p.days[0] || p.date > p.days[p.days.length - 1]) return { error: 'Ngày nghỉ không nằm trong đợt ' + p.dot + ' (' + dayText(p.days[0]) + ' đến ' + dayText(p.days[p.days.length - 1]) + ').' };
+    if (!(p.fee > 0) || !(p.sessions > 0)) return { error: 'Chưa đọc được học phí của lớp.' };
+    const used = p.used === undefined || p.used === '' ? within.length : Number(p.used);
+    if (!Number.isInteger(used) || used < 0 || used > p.sessions) return { error: 'Số buổi phải từ 0 đến ' + p.sessions + '.' };
+    const per = p.fee / p.sessions, tuition = Math.round(used * per), book = p.bookFee || 0;
+    const cell = String(p.discCell === undefined || p.discCell === null ? '' : p.discCell).trim(), base = tuition + book;
+    let share, off, m;
+    if (/miễn|mien/i.test(cell.normalize('NFC'))) off = tuition;
+    else if (!cell) off = 0;
+    else if ((m = cell.match(/^=ROUND\(\$O\d+\*(\d+)\/INDIRECT/))) { share = Math.round(tuition * Number(m[1]) / p.fee); off = share; }
+    else if ((m = cell.match(/^=ROUND\(\$O\d+\*([\d.,]+)%;0\)$/))) { share = Math.round(tuition * Number(m[1].replace(',', '.')) / 100); off = share; }
+    else if (/^[\d.,]+$/.test(cell)) { const v = Number(cell.replace(',', '.')); off = v <= 1 ? Math.round(base * v) : v; }
+    else return { error: 'Không đọc được ô giảm giá của dòng này, hãy mở Sheet kiểm tra.' };
+    const total = Math.max(0, base - off), nm = p.name + (p.eng ? ' (' + p.eng + ')' : ''), two = n => ('0' + n).slice(-2);
+    const msg = ['[THÔNG BÁO THU HỌC PHÍ]', 'LỚP ' + String(p.cls).toUpperCase(), '',
+      'Do con ' + nm + ' học đến hết ngày ' + dayText(p.date) + ', là buổi thứ ' + two(used) + ' của đợt học mới và xin dừng lớp, cô xin gửi Quý Phụ huynh thông tin học phí cần hoàn tất như sau:', '',
+      '- Học phí ' + two(used) + ' buổi: ' + fmt(tuition) + ' đồng'].concat(
+      book > 0 ? ['- Tiền sách, tài liệu (' + p.bookList + '): ' + fmt(book) + ' đồng'] : [],
+      off > 0 ? ['- Chiết khấu/điều chỉnh số tiền còn phải thu: ' + fmt(base - total) + ' đồng'] : [],
+      ['', 'Tổng số tiền cần thanh toán: ' + fmt(total) + ' đồng.', '',
+        total > 0 ? 'Kính nhờ Quý Phụ huynh chuyển khoản vào ' + p.account + ' và gửi lại ảnh giao dịch thành công để cô đối soát.' : 'Hiện không cần thanh toán thêm.', '',
+        'Trân trọng cảm ơn Quý Phụ huynh!']).join('\n');
+    return { used, counted: within.length, per, tuition, book, off: base - total, total, msg, share };
+  }
+
   /** Unpaid rows of both intake tabs that are ready to collect or need checking. Rows come from row 3 (HS MỚI, A:U) and row 4 (HS NGHI, A:X). */
   function intakeDue(newRows, exitRows) {
     const out = [];
@@ -572,5 +606,5 @@
     return (students || []).filter(x => !(marks && marks[x.key]));
   }
 
-  return { recentExits, blocksOf, free, deferred, remindDue, REMIND_AFTER, REMIND_EVERY, sentDay, notMarked, dayOf, dayText, dayNow, calendar, classKey, weekSessions, scheduleGaps, scheduleLessons, weekdays, ackKey, sentIndex, leaveStatus, classifyMoves, moveInputs, qrFromMessage, intakeDue, EXIT_ACCOUNT, NEW_TAB, EXIT_TAB, buildClass, dropGop, addGop, discInput, discText, discValue, planDiscount, locate, classRanges, freshRanges, freshAt, planPaid, planUnpaid, planOverride, findPeriodCol, colA1, quote, fmt, digits, clean, isPaid, todayText, ACTIVE };
+  return { leaveBill, recentExits, blocksOf, free, deferred, remindDue, REMIND_AFTER, REMIND_EVERY, sentDay, notMarked, dayOf, dayText, dayNow, calendar, classKey, weekSessions, scheduleGaps, scheduleLessons, weekdays, ackKey, sentIndex, leaveStatus, classifyMoves, moveInputs, qrFromMessage, intakeDue, EXIT_ACCOUNT, NEW_TAB, EXIT_TAB, buildClass, dropGop, addGop, discInput, discText, discValue, planDiscount, locate, classRanges, freshRanges, freshAt, planPaid, planUnpaid, planOverride, findPeriodCol, colA1, quote, fmt, digits, clean, isPaid, todayText, ACTIVE };
 });

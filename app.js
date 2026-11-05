@@ -775,12 +775,72 @@ function moveRow(m) {
     m.wait ? el('div', { class: 'sub', style: 'margin-top:4px', textContent: 'Còn khoảng ' + Math.ceil(m.waitMs / 3600000) + ' giờ nữa.' })
       : el('div', { class: 'r2' }, [el('div', { class: 'fill' }), el('button', { class: 'quiet', textContent: 'Bỏ qua', onclick: () => boQuaMove(m) }), el('button', { class: 'primary', textContent: 'Duyệt', onclick: () => moDuyet(m) })])]);
 }
+/* ---------- A leaver the Sheet cannot price yet: the bill from the Schedule, seen and confirmed before anything is written ---------- */
+let tinh = null;
+async function moTinh(it) {
+  tinh = { key: it.key, busy: 'Đang đọc lịch và dòng của em này…' }; render();
+  try {
+    if (!sched || !sched.sessions) await loadSchedule();
+    const tabQ = L.quote(it.tab), [[row], [acc]] = await Promise.all([batchGet([tabQ + '!A' + it.row + ':X' + it.row]), batchGet(["'DANH_MUC_SACH'!E3:I6"])]);
+    const [[cellF]] = await batchGet([tabQ + '!E' + it.row], 'FORMULA');
+    const r = row[0] || [];
+    if (L.clean(r[1]) !== L.clean(it.name)) throw new Error('Dòng ' + it.row + ' đã đổi học sinh, hãy tải lại.');
+    if (/CẦN KIỂM TRA/.test(String(r[21]))) throw new Error('Tiền sách đang lỗi: ' + r[21]);
+    const data = await readClass(it.cls), before = data.history.find(h => Number(h.dot) === Number(data.nextDot) - 1), prevEnd = L.dayOf(before && before.to ? before.to : data.prevEnd);
+    const list = !isNaN(prevEnd) && sched && sched.sessions && sched.last ? L.scheduleLessons(prevEnd, data.lessons.length || Number(data.sessions) || 20, sched.sessions[it.cls], sched.last, data.lessons) : data.lessons.map(day => ({ day, known: false }));
+    const dot = Number(data.nextDot) - 1, me = data.items.find(x => L.clean(x.name) === L.clean(it.name));
+    // The owner's rule: a student who already paid the đợt they left in owes nothing for it.
+    const paid = me && (String(data.dot) === String(dot) ? me.paid : me.prev && me.prev.dot === String(dot) && me.prev.paid);
+    const accountRow = (acc || []).find(a => a[0] === r[22]);
+    tinh = { key: it.key, dot, list, paid, input: { days: list.map(x => x.day), date: L.dayOf(r[7]), join: L.dayOf(r[3]) || 0, fee: L.digits(data.fee), sessions: Number(data.sessions) || list.length,
+      bookFee: L.digits(r[21]), bookList: r[20] || '', discCell: ((cellF || [])[0]), name: it.name, eng: it.eng, cls: it.cls, account: accountRow ? accountRow[4] : r[22], dot } };
+  } catch (e) { tinh = { key: it.key, error: e.message }; }
+  render();
+}
+function tinhPanel(it) {
+  const t = tinh, shut = el('button', { class: 'quiet', textContent: 'Đóng', onclick: () => { tinh = null; render(); } });
+  if (t.busy) return el('div', { class: 'sub', style: 'margin-top:6px', textContent: t.busy });
+  if (t.error) return el('div', { class: 'warn-line' }, [t.error, shut]);
+  const bill = L.leaveBill(t.input), msg = el('span', { class: 'sub', role: 'status' });
+  const used = el('input', { type: 'number', min: '0', max: String(t.input.sessions), value: String(t.input.used === undefined ? (bill.used === undefined ? '' : bill.used) : t.input.used), 'aria-label': 'Số buổi', style: 'width:80px', onchange: e => { t.input.used = e.target.value; render(); } });
+  const kids = [el('h3', { class: 'panel-title', style: 'margin-top:10px', textContent: 'Tính theo Schedule, đợt ' + t.dot })];
+  if (t.paid) kids.push(el('div', { class: 'warn-line', textContent: 'Bảng ghi em này đã đóng đợt ' + t.dot + ': đúng ra không thu học phí đợt này. Xem lại trước khi ghi.' }));
+  if (bill.error && t.input.used === undefined) kids.push(el('div', { class: 'warn-line', textContent: bill.error }));
+  else {
+    kids.push(el('div', { style: 'display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin:6px 0' }, [el('label', { style: 'margin:0', textContent: 'Số buổi đã học' }), used, bill.used !== undefined && bill.used !== bill.counted ? el('span', { class: 'sub', textContent: 'Schedule đếm được ' + bill.counted + ' buổi' }) : '']));
+    if (bill.error) kids.push(el('div', { class: 'warn-line', textContent: bill.error }));
+    else kids.push(
+      el('dl', { class: 'kv' }, [
+        el('dt', { textContent: 'Học phí' }), el('dd', { textContent: bill.used + ' buổi × ' + L.fmt(Math.round(bill.per)) + ' đ = ' + L.fmt(bill.tuition) + ' đ' }),
+        bill.book ? el('dt', { textContent: 'Sách' }) : '', bill.book ? el('dd', { textContent: L.fmt(bill.book) + ' đ' }) : '',
+        bill.off ? el('dt', { textContent: 'Giảm' }) : '', bill.off ? el('dd', { textContent: L.fmt(bill.off) + ' đ' }) : '',
+        el('dt', { textContent: 'Tổng' }), el('dd', {}, [el('strong', { textContent: L.fmt(bill.total) + ' đ' })])]),
+      el('details', { class: 'hist' }, [el('summary', { textContent: 'Xem tin nhắn sẽ gửi' }), el('pre', { class: 'detail', textContent: bill.msg })]));
+  }
+  kids.push(el('div', { class: 'r2' }, [msg, el('div', { class: 'fill' }), shut, bill.error ? '' : el('button', { class: 'primary', textContent: 'Ghi số này', onclick: () => ghiTinh(it, bill, msg) })]));
+  return el('div', {}, kids);
+}
+async function ghiTinh(it, bill, msg) {
+  if (!confirm('Ghi ' + fullName(it) + ': ' + bill.used + ' buổi, tổng ' + L.fmt(bill.total) + ' đ vào dòng ' + it.row + ' tab ' + it.tab + '?')) return;
+  msg.textContent = 'Đang lưu…';
+  const q = L.quote(it.tab), dot = tinh.dot;
+  try {
+    const [[name]] = await batchGet([q + '!B' + it.row]);
+    if (L.clean((name || [])[0]) !== L.clean(it.name)) throw new Error('Dòng ' + it.row + ' đã đổi học sinh, hãy tải lại.');
+    await batchWrite([['I', 'Đợt ' + dot], ['N', bill.used], ['O', bill.tuition], ['M', bill.msg]].map(([c, v]) => ({ range: q + '!' + c + it.row, values: [[v]] })));
+    tinh = null; await loadMoves();
+    notice('Đã ghi ' + it.name + ': ' + L.fmt(bill.total) + ' đ. Dòng này giờ là số ghi tay, Sheet không tự đổi nữa.');
+  } catch (e) { msg.textContent = 'Không lưu được: ' + e.message; }
+}
 function dueRow(it) {
   const d = el('input', { type: 'date', value: localDate(), max: localDate(), 'aria-label': 'Ngày nộp của ' + it.name });
   return el('div', { class: 'row card' }, [
     el('div', { class: 'r1' }, [el('span', { class: 'nm', textContent: fullName(it) }), el('span', { class: 'amt', textContent: it.problem ? 'Cần kiểm tra' : money(it.amount) })]),
     el('div', { class: 'sub', style: 'margin-top:4px', textContent: KIND[it.kind] + ' · ' + it.cls }),
-    it.problem ? el('div', { class: 'warn-line' }, ['Sheet chưa tính được số tiền (tab ' + it.tab + ', dòng ' + it.row + '): ' + (it.reason || 'bạn mở Sheet kiểm tra.')])
+    it.problem ? el('div', { class: 'warn-line' }, ['Sheet chưa tính được số tiền (tab ' + it.tab + ', dòng ' + it.row + '): ' + (it.reason || 'bạn mở Sheet kiểm tra.'),
+      it.kind === 'nghi' && !(tinh && tinh.key === it.key) ? el('button', { class: 'quiet', textContent: 'Tính theo Schedule', onclick: () => moTinh(it) }) : '']) : '',
+    it.problem && tinh && tinh.key === it.key ? tinhPanel(it) : '',
+    it.problem ? ''
       : el('div', { class: 'r2' }, [el('button', { textContent: 'Xem thiệp', disabled: !it.qr, onclick: () => moThiep(it) }),
         el('label', { class: 'ack', style: 'margin:0' }, [el('input', { type: 'checkbox', checked: !!dueMark(it), onchange: e => { logSent(dueCls(it), DUE_DOT, [it], e.target.checked ? 'da-gui' : 'bo'); render(); } }), dueMark(it) ? sentText(dueMark(it)) : 'Đã gửi tin']),
         el('div', { class: 'fill' }), d, el('button', { class: 'tick', textContent: 'Đã nộp', onclick: () => tickDue(it, d.value) })])]);
@@ -895,7 +955,7 @@ const isoToText = iso => { const [y, m, d] = String(iso).split('-'); return iso 
 /** Shows what the leaving date means for this student, and which action comes first. */
 function capNhatNghi(m) {
   const r = L.leaveStatus(dvHist, m.blocks, isoToText($('dvDate').value)), dot = r.dot ? 'Đợt ' + r.dot : 'đợt này';
-  const lich = r.noSchedule ? ' Lịch đợt này chưa có trong lớp nên Sheet sẽ báo cần kiểm tra, chưa ra số tiền.' : '';
+  const lich = r.noSchedule ? ' Lịch đợt này chưa có trong lớp nên Sheet sẽ báo cần kiểm tra. Sau khi thêm, vào mục Cần thu bấm "Tính theo Schedule".' : '';
   const coSach = dvBookList.some(Boolean);
   $('dvKhongThu').hidden = false; $('dvLuu').hidden = false; $('dvLuu').disabled = false; $('dvLuu').className = ''; $('dvKhongThu').className = '';
   $('dvKhongThu').textContent = coSach ? 'Đã đóng, chỉ thu tiền sách' : 'Đã đóng, không thu';
@@ -960,12 +1020,17 @@ async function ghiDongMoi(input) {
     requests.push({ copyPaste: { source: { sheetId, startRowIndex: source - 1, endRowIndex: source, startColumnIndex: c, endColumnIndex: c + 1 },
       destination: { sheetId, startRowIndex: target - 1, endRowIndex: target, startColumnIndex: c, endColumnIndex: c + 1 }, pasteType: 'PASTE_FORMULA' } });
   });
-  // A books-only row holds 0 in O instead of the formula, so the row after it takes O from the last row that has one.
-  if (input.tab !== 'HS MỚI' && input.cells.O === undefined && !/^=/.test(String((rowFormulas[0] || [])[14]))) {
-    const [col] = await batchGet([tab + '!O' + input.firstDataRow + ':O' + source], 'FORMULA');
-    let from = -1; col.forEach((r, k) => { if (/^=/.test(String((r || [])[0]))) from = k; });
-    if (from >= 0) requests.push({ copyPaste: { source: { sheetId, startRowIndex: input.firstDataRow + from - 1, endRowIndex: input.firstDataRow + from, startColumnIndex: 14, endColumnIndex: 15 },
-      destination: { sheetId, startRowIndex: target - 1, endRowIndex: target, startColumnIndex: 14, endColumnIndex: 15 }, pasteType: 'PASTE_FORMULA' } });
+  // A leaver's row can hold typed values in I, M, N and O instead of formulas, so the row after it takes those from the last row that has one.
+  if (input.tab !== 'HS MỚI') {
+    const typed = [8, 12, 13, 14].filter(c => input.cells[L.colA1(c + 1)] === undefined && !/^=/.test(String((rowFormulas[0] || [])[c])));
+    if (typed.length) {
+      const [all] = await batchGet([tab + '!A' + input.firstDataRow + ':X' + source], 'FORMULA');
+      typed.forEach(c => {
+        let from = -1; all.forEach((r, k) => { if (/^=/.test(String((r || [])[c]))) from = k; });
+        if (from >= 0) requests.push({ copyPaste: { source: { sheetId, startRowIndex: input.firstDataRow + from - 1, endRowIndex: input.firstDataRow + from, startColumnIndex: c, endColumnIndex: c + 1 },
+          destination: { sheetId, startRowIndex: target - 1, endRowIndex: target, startColumnIndex: c, endColumnIndex: c + 1 }, pasteType: 'PASTE_FORMULA' } });
+      });
+    }
   }
   if (requests.length) await api(':batchUpdate', { method: 'POST', body: JSON.stringify({ requests }) }, 2);
   const fill = v => typeof v === 'string' ? v.replace(/{r}/g, target) : v;
