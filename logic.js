@@ -72,9 +72,9 @@
       const status = statusCol > 0 ? String(cell([r], 0, statusCol - 1)) : '';
       const tienSheet = statusCol > 0 ? digits(cell([r], 0, statusCol)) : 0;
       const date = statusCol > 0 ? String(cell([r], 0, statusCol + 1)) : '';
-      const tienAuto = totalIn(auto), filled = kho[['TUDIEN', tab, 'D' + dot, name, eng].join('|')];
-      // A cell the daily job filled, whose auto total has moved since (say the previous đợt was ticked). The job rewrites it at 06:00; until then the message is right.
-      const stale = filled !== undefined && tienSheet > 0 && tienAuto > 0 && digits(filled) === tienSheet && tienSheet !== tienAuto;
+      const tienAuto = totalIn(auto);
+      // The owner's rule: only Sửa riêng keeps a hand figure. Any other cell that differs is rewritten by the daily job at 06:00; until then the message is right.
+      const stale = !sua.msg && !sua.amt && tienSheet > 0 && tienAuto > 0 && tienSheet !== tienAuto;
       let soTien = String(sua.amt || '').replace(/\D/g, '');
       if (sua.msg || sua.amt) { if (!sua.daGhi && tienSheet > 0) soTien = ''; }
       if (soTien && tienSheet > 0 && tienSheet !== Number(soTien)) soTien = String(tienSheet);
@@ -241,13 +241,6 @@
     const expr = pct ? 'TO_PERCENT(' + String(Number(pct[1]) / 100).replace('.', ',') + ')' : typeof disc === 'number' ? disc : '"' + disc + '"';
     up.push({ range: ledger, values: [[pct ? String(disc) : disc]] });
     if (!isLet(curE)) up.push({ range: a1(tab, 5, it.row), values: [[disc === '' ? '' : liveFormula(it.row, expr)]] });
-    return up;
-  }
-
-  /** The period's amount in the table and its ledger copy, when the owner chooses the worked-out figure over the one in the cell. */
-  function planAmount(tab, it, fresh, dot, amount) {
-    const p = periodCells(tab, it, fresh, dot), up = [{ range: p.lA1(1), values: [[Number(amount)]] }];
-    if (!isLet(p.vis(1))) up.push({ range: p.vA1(1), values: [[liveFormula(it.row, Number(amount))]] });
     return up;
   }
 
@@ -616,5 +609,5 @@
     return (students || []).filter(x => !(marks && marks[x.key]));
   }
 
-  return { planAmount, leaveBill, recentExits, blocksOf, free, deferred, remindDue, REMIND_AFTER, REMIND_EVERY, sentDay, notMarked, dayOf, dayText, dayNow, calendar, classKey, weekSessions, scheduleGaps, scheduleLessons, weekdays, ackKey, sentIndex, leaveStatus, classifyMoves, moveInputs, qrFromMessage, intakeDue, EXIT_ACCOUNT, NEW_TAB, EXIT_TAB, buildClass, dropGop, addGop, discInput, discText, discValue, planDiscount, locate, classRanges, freshRanges, freshAt, planPaid, planUnpaid, planOverride, findPeriodCol, colA1, quote, fmt, digits, clean, isPaid, todayText, ACTIVE };
+  return { leaveBill, recentExits, blocksOf, free, deferred, remindDue, REMIND_AFTER, REMIND_EVERY, sentDay, notMarked, dayOf, dayText, dayNow, calendar, classKey, weekSessions, scheduleGaps, scheduleLessons, weekdays, ackKey, sentIndex, leaveStatus, classifyMoves, moveInputs, qrFromMessage, intakeDue, EXIT_ACCOUNT, NEW_TAB, EXIT_TAB, buildClass, dropGop, addGop, discInput, discText, discValue, planDiscount, locate, classRanges, freshRanges, freshAt, planPaid, planUnpaid, planOverride, findPeriodCol, colA1, quote, fmt, digits, clean, isPaid, todayText, ACTIVE };
 });

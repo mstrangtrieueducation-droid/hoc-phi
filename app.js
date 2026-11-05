@@ -1356,21 +1356,6 @@ function discLine(it) {
   const p = discPicker(it.disc), msg = el('span', { class: 'sub', role: 'status' });
   return el('div', { class: 'r3', style: 'flex-wrap:wrap' }, [p.node, el('button', { class: 'act', textContent: 'Lưu', onclick: () => luuGiam(it, p, msg) }), el('button', { class: 'quiet', textContent: 'Huỷ', onclick: () => { discOpen = null; render(); } }), msg]);
 }
-/** The owner picks the worked-out figure. Marked as auto-filled, so the daily job keeps it in step from here on. */
-async function dungTuTinh(it) {
-  const amt = it.tienAuto, name = cur.tab, dot = cur.dot;
-  if (!confirm('Đổi số của ' + fullName(it) + ' từ ' + money(it.tienSheet) + ' thành ' + money(amt) + '? Từ nay số này tự đổi theo tin nhắn.')) return;
-  notice('Đang lưu ' + it.name + '…');
-  try {
-    const want = L.freshRanges(name, [it.row]), [values, cells, kho] = await Promise.all([batchGet(want.values), batchGet(want.cells, 'FORMULA'), batchGet(["'_TRO_LY_ZALO'!A:A"])]);
-    const key = ['TUDIEN', name, 'D' + dot, it.name, it.eng].join('|'), rows = kho[0] || [], at = rows.findIndex(r => r[0] === key), row = at >= 0 ? at + 1 : rows.length + 1;
-    await batchWrite(L.planAmount(name, it, L.freshAt(values, cells, 0), dot, amt).concat({ range: "'_TRO_LY_ZALO'!A" + row + ':B' + row, values: [[key, String(amt)]] }));
-    it.tienSheet = amt; it.amount = amt; it.soTien = ''; it.warn = ''; it.msg = it.auto; it.qr = String(it.qr || '').replace(/amount=\d+/, 'amount=' + amt); khoMemo = null;
-    const c = store.get('hp_cls_' + name); if (c) { c.dirty = true; store.set('hp_cls_' + name, c); }
-    notice('Đã đổi số của ' + it.name + ' thành ' + money(amt) + '.'); render();
-  } catch (e) { notice('Không lưu được: ' + e.message, true); }
-}
-const nutTuTinh = it => it.tienAuto > 0 ? el('button', { class: 'quiet', textContent: 'Dùng ' + money(it.tienAuto), onclick: () => dungTuTinh(it) }) : '';
 function feeRow(it) {
   const d = el('input', { type: 'date', value: picked[it.key] || localDate(), max: localDate(), 'aria-label': 'Ngày nộp của ' + it.name, oninput: e => { picked[it.key] = e.target.value; } });
   const gone = !it.paid && daRoi(it);
@@ -1389,7 +1374,7 @@ function feeRow(it) {
     nhacLine(it),
     it.gop && !it.paid ? el('div', { class: 'warn-line' }, ['Đã gộp đợt ' + it.gop.dot + ': ' + money(it.gop.amount) + (it.gop.blank ? ' vì đợt đó chưa ghi nộp hay chưa.' : ' vì đợt đó chưa nộp.'), el('button', { class: 'quiet', textContent: 'Đợt ' + it.gop.dot + ' đã nộp', onclick: () => tickPrev(it, d.value) })]) : '',
     prevDone[it.key] && it.prev && it.prev.paid && !it.paid ? el('div', { class: 'warn-line' }, ['Vừa ghi đợt ' + it.prev.dot + ' đã nộp ngày ' + it.prev.date + (it.prev.luu ? ' · đang lưu' : '') + '.', el('button', { class: 'quiet', textContent: 'Hoàn tác', onclick: () => boTickPrev(it) })]) : '',
-    it.warn && !L.free(it) ? el('div', { class: 'warn-line' }, [it.warn, nutTuTinh(it), el('button', { class: 'quiet', textContent: 'Xem và sửa', onclick: () => moSua(it) })]) : '',
+    it.warn && !L.free(it) ? el('div', { class: 'warn-line' }, [it.warn, el('button', { class: 'quiet', textContent: 'Xem và sửa', onclick: () => moSua(it) })]) : '',
     L.free(it) && it.tienSheet > 0 ? el('div', { class: 'warn-line' }, ['Bảng vẫn ghi ' + money(it.tienSheet) + ' cho đợt này. Em miễn học phí nên app không tính số này, bạn xem lại ô đó trong Sheet.']) : '',
     !it.warn && it.trong && canThu(it) ? el('div', { class: 'warn-line' }, ['Chưa có tin hoặc số tiền đợt này.', el('button', { class: 'quiet', textContent: 'Nhập', onclick: () => moSua(it) })]) : '']);
 }
@@ -1449,7 +1434,7 @@ function renderZalo(box) {
   box.append(el('div', { class: 'zalo' }, [people, el('div', { class: 'stage' }, [
     sel,
     el('div', { class: 'who' }, [el('b', { textContent: fullName(it) }), it.rieng ? el('span', { class: 'tag', textContent: 'đã sửa riêng' }) : '', el('button', { class: 'quiet', textContent: 'Sửa riêng', onclick: () => moSua(it) })]),
-    it.warn ? el('div', { class: 'warn-line', style: 'margin:0 0 8px' }, [it.warn, nutTuTinh(it)]) : '',
+    it.warn ? el('div', { class: 'warn-line', style: 'margin:0 0 8px' }, [it.warn]) : '',
     nhacLine(it, 'margin:0 0 8px'),
     it.gop ? el('div', { class: 'warn-line', style: 'margin:0 0 8px' }, ['Tin này gộp cả đợt ' + it.gop.dot + ' (' + money(it.gop.amount) + ')' + (it.gop.blank ? ' vì đợt đó chưa ghi nộp hay chưa. Xem sao kê trước khi gửi' : '') + '. Đã nộp rồi thì bấm "Đợt ' + it.gop.dot + ' đã nộp" ở tab Thu tiền, số sẽ tự trừ.']) : '',
     chuaGhi(it) ? el('div', { class: 'warn-line', style: 'margin:0 0 8px' }, ['Em này chưa ghi nộp hay chưa. Xem sao kê trước khi gửi, đã nộp thì tick ở tab Thu tiền.']) : '',
