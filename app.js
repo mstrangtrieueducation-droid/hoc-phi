@@ -1312,16 +1312,28 @@ function tutorTiep(it) {
   const k = tutorShown.indexOf(it.key);
   tutorOpen = tutorShown[k + 1] || tutorShown[k - 1] || '';
 }
+// The owner's usual prices per session; 300.000 is the default (06/11/2026). "Khác" opens the full form.
+const TUTOR_GIA = [200000, 300000, 500000], TUTOR_GIA_MAC_DINH = 300000;
 function tutorGiaForm(it) {
   const mode = el('select', { 'aria-label': 'Cách tính tiền' }, [['buoi', 'Theo buổi'], ['gio', 'Theo giờ'], ['mien', 'Miễn phí']].map(([v, t]) => el('option', { value: v, textContent: t })));
   mode.value = it.rate ? it.rate.mode : 'buoi';
+  const chon = (m, v) => {
+    const r = it.rate;
+    if (r && r.mode === m && (m === 'mien' || r.price === v)) return;
+    notice('');
+    if (tutorFilter === 'gia') tutorTiep(it);
+    tutorLuuGia(it.name, it.month, m, v);
+  };
   const luu = () => {
     const v = L.digits(price.value);
     if (mode.value !== 'mien' && !v) return notice('Hãy nhập số tiền, hoặc chọn Miễn phí.', true);
-    notice('');
-    if (tutorFilter === 'gia') tutorTiep(it);
-    tutorLuuGia(it.name, it.month, mode.value, v);
+    chon(mode.value, v);
   };
+  const r = it.rate, dang = !r ? TUTOR_GIA_MAC_DINH : r.mode === 'mien' ? 'mien' : r.mode === 'buoi' ? r.price : null;
+  const quick = el('div', { class: 'tutor-line' }, TUTOR_GIA.map(p => el('button', { class: 'tt-pick' + (dang === p ? ' primary' : ''),
+    textContent: L.fmt(p) + ' đ/buổi' + (!r && p === TUTOR_GIA_MAC_DINH ? ' (mặc định)' : ''), onclick: () => chon('buoi', p) }))
+    .concat(el('button', { class: 'tt-pick' + (dang === 'mien' ? ' primary' : ''), textContent: 'Miễn phí', onclick: () => chon('mien', '') }),
+      el('button', { class: 'tt-pick quiet', textContent: 'Khác…', onclick: () => { khac.hidden = !khac.hidden; if (!khac.hidden) price.focus(); } })));
   const price = el('input', { id: 'ttGia', inputmode: 'numeric', placeholder: 'Số tiền', 'aria-label': 'Đơn giá', value: it.rate && it.rate.price ? String(it.rate.price) : '', onkeydown: e => { if (e.key === 'Enter') luu(); } });
   const used = el('div', { class: 'tutor-line' });
   const fillUsed = () => {
@@ -1331,8 +1343,10 @@ function tutorGiaForm(it) {
     price.hidden = mode.value === 'mien'; used.hidden = mode.value === 'mien';
   };
   mode.addEventListener('change', fillUsed); fillUsed();
-  return el('section', {}, [el('h3', { textContent: 'Giá' }), el('div', { class: 'tutor-line' }, [mode, price, el('button', { class: 'primary', textContent: 'Lưu giá', onclick: luu })]), used,
-    el('div', { class: 'sub', textContent: 'Áp dụng từ tháng ' + L.monthText(it.month) + ' trở đi.' })]);
+  const khac = el('div', {}, [el('div', { class: 'tutor-line' }, [mode, price, el('button', { class: 'primary', textContent: 'Lưu giá', onclick: luu })]), used]);
+  if (dang !== null) khac.hidden = true;
+  return el('section', {}, [el('h3', { textContent: 'Giá' }), quick, khac,
+    el('div', { class: 'sub', textContent: (r ? 'Đang tính: ' + tutorRateText(it) + '. ' : 'Chưa chọn giá: bấm một mức để lưu. ') + 'Áp dụng từ tháng ' + L.monthText(it.month) + ' trở đi.' })]);
 }
 function tutorSachForm(it) {
   const pick = el('select', { 'aria-label': 'Chọn sách' }, [el('option', { value: '', textContent: bookList ? 'Chọn sách…' : 'Đang đọc danh mục…' })].concat((bookList || []).map(b => el('option', { value: b.name, textContent: b.name + ' · ' + L.fmt(b.price) }))));
