@@ -978,8 +978,8 @@ function moThem() {
   const denLop = lop('dvDen', 'Chuyển đến lớp', name => { m.to = name; veDuyet(m); });
   const denWrap = el('div', { hidden: true }, [el('label', { textContent: 'Chuyển đến lớp' }), denLop]);
   // Owner 08/11/2026: a leaver is taken off THEO DÕI TOÀN DIỆN at once, or stays until the đợt ends and is then taken off by the app.
-  const tdChon = el('select', { id: 'dvTD', 'aria-label': 'Theo dõi toàn diện', onchange: e => { m.td = e.target.value; $('dvErr').textContent = ''; } },
-    [el('option', { value: '', textContent: 'Chọn xoá ngay hay để hết đợt' }), el('option', { value: 'xoa', textContent: 'Xoá khỏi Toàn diện ngay' }), el('option', { value: 'het-dot', textContent: 'Để đến hết đợt, app tự xoá' })]);
+  const tdChon = el('select', { id: 'dvTD', 'aria-label': 'Theo dõi toàn diện', onchange: e => { m.td = e.target.value; $('dvErr').textContent = ''; if (dvHist) capNhatNghi(m); else anNgay(m, false); } },
+    [el('option', { value: '', textContent: 'Chọn xoá ngay hay để hết đợt' }), el('option', { value: 'xoa', textContent: 'Xoá khỏi Toàn diện ngay' }), el('option', { value: 'het-dot', textContent: 'Học đến hết đợt rồi nghỉ, app tự xoá' })]);
   const tdWrap = el('div', {}, [el('label', { textContent: 'Theo dõi toàn diện' }), tdChon]);
   const loai = el('select', { id: 'dvLoai', 'aria-label': 'Việc', onchange: e => { m.kind = e.target.value; denWrap.hidden = m.kind !== 'chuyen'; tdWrap.hidden = m.kind !== 'nghi'; veDuyet(m); } },
     [el('option', { value: 'nghi', textContent: 'Nghỉ học' }), el('option', { value: 'chuyen', textContent: 'Chuyển lớp' })]);
@@ -1003,7 +1003,7 @@ function veDuyet(m) {
   $('dvRoute').textContent = !ready ? '' : m.kind === 'chuyen' ? m.from + ' → ' + m.to : cls;
   $('dvDateLabel').textContent = m.kind === 'moi' ? 'Ngày vào lớp' : m.kind === 'chuyen' ? 'Ngày chuyển' : 'Ngày nghỉ';
   $('dvAcc').textContent = m.kind === 'nghi' ? 'Thu vào tài khoản: ' + L.EXIT_ACCOUNT : '';
-  $('dvErr').textContent = '';
+  $('dvErr').textContent = ''; anNgay(m, false);
   $('dvLuu').hidden = false; $('dvLuu').disabled = false; $('dvLuu').className = 'primary'; $('dvKhongThu').hidden = true; $('dvLuu').textContent = moiTay ? 'Thêm và tạo tin nhắn' : 'Thêm vào danh sách thu';
   $('dvStatus').textContent = m.manual && !ready ? (moiTay ? 'Chọn lớp, nhập họ tên rồi điền ngày.' : 'Chọn đủ ở trên rồi điền ngày.') : ''; dvHist = null; dvLessons = [];
   if (m.kind === 'nghi' && ready) {
@@ -1038,10 +1038,24 @@ function veSachDuyet(m) {
 }
 const isoToText = iso => { const [y, m, d] = String(iso).split('-'); return iso ? d + '/' + m + '/' + y : ''; };
 /** Shows what the leaving date means for this student, and which action comes first. */
+/**
+ * "Để đến hết đợt" needs no leaving date (owner 08/11/2026): the date box is hidden and set to the day after the đợt's last
+ * lesson, so saving works as if that day had been typed. `end` is the end day, false while the class is still loading
+ * (kept hidden), 0 when the class does not say (the box comes back).
+ */
+function anNgay(m, end) {
+  const an = m.kind === 'nghi' && m.td === 'het-dot' && end !== 0;
+  $('dvDate').hidden = an; $('dvDateLabel').hidden = an;
+  if (an && end) { const d = new Date((end + 1) * 86400000); $('dvDate').value = d.toISOString().slice(0, 10); }
+}
 function capNhatNghi(m) {
+  const hetDotTu = m.td === 'het-dot', end = hetDotTu ? L.hetDotEnd(dvHist, dvLessons, L.dayNow(new Date())) : 0;
+  anNgay(m, end);
   const cuoi = L.lastLessonBefore(dvLessons, isoToText($('dvDate').value));
   const r = L.leaveStatus(dvHist, m.blocks, cuoi.text), dot = r.dot ? 'Đợt ' + r.dot : 'đợt này';
-  const cuoiDong = $('dvDate').value ? (cuoi.known ? ' Buổi cuối em học: ' + cuoi.text + '.' : ' Lịch trong tab lớp không có buổi trước ngày này, Sheet sẽ ghi ' + cuoi.text + '.') : '';
+  const cuoiDong = hetDotTu && end ? ' Em học đến hết đợt, buổi cuối ' + L.dayText(end) + ', sau ngày đó app tự xoá khỏi Theo dõi toàn diện.'
+    : hetDotTu ? ' Không đọc được ngày hết đợt trong tab lớp, hãy chọn ngày nghỉ (ngày đầu em không học).'
+    : $('dvDate').value ? (cuoi.known ? ' Buổi cuối em học: ' + cuoi.text + '.' : ' Lịch trong tab lớp không có buổi trước ngày này, Sheet sẽ ghi ' + cuoi.text + '.') : '';
   const lich = r.noSchedule ? ' Lịch đợt này chưa có trong lớp nên Sheet sẽ báo cần kiểm tra. Sau khi thêm, vào mục Cần thu bấm "Tính theo Schedule".' : '';
   const coSach = dvBookList.some(Boolean);
   $('dvKhongThu').hidden = false; $('dvLuu').hidden = false; $('dvLuu').disabled = false; $('dvLuu').className = ''; $('dvKhongThu').className = '';
