@@ -503,6 +503,55 @@
     return { used, counted: within.length, per, tuition, book, off: base - total, total, msg, share };
   }
 
+  /**
+   * A leaver whose only payment is the intake on HS MỚI (owner 08/11/2026: SAM, KIDS 38). The intake paid a number of lessons counted
+   * from the joining day; lessons after those, up to the leaving day, are owed per session. Fewer lessons used is not refunded.
+   * p: { join, date (day numbers), lessons (day numbers known for the class), paid (lessons the intake paid), fee, sessions (class),
+   *      discCell (E of the leaver row), bookFee, bookList, name, eng, cls, account }
+   */
+  function intakeLeave(p) {
+    const lessons = [...new Set(p.lessons || [])].filter(d => !isNaN(d)).sort((a, b) => a - b);
+    if (!lessons.length) return { error: 'Chưa đọc được lịch buổi học của lớp.' };
+    if (isNaN(p.join) || p.join < lessons[0]) return { error: 'Lịch của lớp không có đủ buổi từ ngày vào lớp, hãy mở Sheet kiểm tra.' };
+    if (isNaN(p.date) || p.date > lessons[lessons.length - 1]) return { error: 'Ngày nghỉ sau buổi cuối có trong lịch của lớp, hãy bấm "Tính theo Schedule" hoặc mở Sheet kiểm tra.' };
+    if (!(p.fee > 0) || !(p.sessions > 0) || !(p.paid > 0)) return { error: 'Chưa đọc được học phí của lớp hoặc số buổi đợt đầu.' };
+    const used = lessons.filter(d => d >= p.join && d <= p.date), owed = used.slice(p.paid), book = p.bookFee || 0;
+    const tuition = Math.round(owed.length * p.fee / p.sessions);
+    const cell = String(p.discCell === undefined || p.discCell === null ? '' : p.discCell).trim();
+    const share = cell.match(/^=ROUND\(\$O\d+\*(\d+)\/INDIRECT/), pct = cell.match(/^=ROUND\(\$O\d+\*([\d.,]+)%;0\)$/);
+    if (cell && !share && !pct) return { error: 'Không đọc được ô giảm giá của dòng này, hãy mở Sheet kiểm tra.' };
+    const off = share ? Math.round(tuition * Number(share[1]) / p.fee) : pct ? Math.round(tuition * Number(pct[1].replace(',', '.')) / 100) : 0;
+    const total = Math.max(0, tuition + book - off), nm = p.name + (p.eng ? ' (' + p.eng + ')' : ''), two = n => ('0' + n).slice(-2);
+    if (total > 0 && !p.account) return { error: 'Tin nhắn của dòng này không có số tài khoản, hãy mở Sheet kiểm tra.' };
+    const short = d => dayText(d).slice(0, 5), list = owed.map(short);
+    const lastPaid = used.length >= p.paid ? used[p.paid - 1] : 0;
+    const intro = 'Do con ' + nm + ' vào lớp từ ngày ' + dayText(p.join) + ', đợt đầu đã đóng ' + p.paid + ' buổi' + (lastPaid ? ' (đến hết buổi ngày ' + dayText(lastPaid) + ')' : '') +
+      ', con học đến hết ngày ' + dayText(p.date) + ' và xin dừng lớp, cô xin gửi Quý Phụ huynh thông tin học phí cần hoàn tất như sau:';
+    const msg = ['[THÔNG BÁO THU HỌC PHÍ]', 'LỚP ' + String(p.cls).toUpperCase(), '', intro, '',
+      owed.length ? '- Học phí ' + two(owed.length) + ' buổi học thêm sau ' + p.paid + ' buổi đợt đầu (' + (list.length > 1 ? list.slice(0, -1).join(', ') + ' và ' + list[list.length - 1] : list[0]) + '/' + dayText(p.date).slice(6) + '): ' + fmt(tuition) + ' đồng' : '- Không thu thêm học phí.'].concat(
+      book > 0 ? ['- Tiền sách, tài liệu (' + p.bookList + '): ' + fmt(book) + ' đồng'] : [],
+      off > 0 ? ['- Chiết khấu/điều chỉnh số tiền còn phải thu: ' + fmt(off) + ' đồng'] : [],
+      ['', 'Tổng số tiền cần thanh toán: ' + fmt(total) + ' đồng.', '',
+        total > 0 ? 'Kính nhờ Quý Phụ huynh chuyển khoản vào ' + p.account + ' và gửi lại ảnh giao dịch thành công để cô đối soát.' : 'Hiện không cần thanh toán thêm.', '',
+        'Trân trọng cảm ơn Quý Phụ huynh!']).join('\n');
+    return { used: owed.length, tuition, off, total, msg };
+  }
+  /** Every lesson day a class tab lists: the "Chi tiết buổi học" texts of its history (J18:T36, column T) and the running đợt (AK20:AK39). */
+  function classLessonDays(hist, ak) {
+    const out = [];
+    (hist || []).forEach(r => (String((r || [])[10] || '').match(/\d{1,2}\/\d{1,2}\/\d{4}/g) || []).forEach(t => out.push(dayOf(t))));
+    (ak || []).forEach(r => out.push(dayOf((r || [])[0])));
+    return out.filter(d => !isNaN(d));
+  }
+  /** The last lesson of the đợt a date falls in, from the history rows (row "đợt n" holds the lessons of đợt n-1); 0 when unknown. */
+  function dotEndDay(hist, dateText) {
+    const day = dayOf(dateText); if (isNaN(day)) return 0;
+    // The first collection row (đợt 1) has no lessons of its own, so the row with the highest đợt number wins.
+    const hit = (hist || []).map(r => ({ dot: digits((r || [])[2]), from: dayOf((r || [])[3]), to: dayOf((r || [])[4]) })).filter(r => !isNaN(r.from) && !isNaN(r.to) && r.from <= day && day <= r.to)
+      .sort((a, b) => b.dot - a.dot)[0];
+    return hit ? hit.to : 0;
+  }
+
   /** Unpaid rows of both intake tabs that are ready to collect or need checking. Rows come from row 3 (HS MỚI, A:U) and row 4 (HS NGHI, A:X). */
   function intakeDue(newRows, exitRows) {
     const out = [];
@@ -768,5 +817,5 @@
       v.sentAt || '', v.lan || '', v.by || '', v.paid || '', who || '', at || ''];
   }
 
-  return { tickStatus, tickBill, parseBlocks, TUTOR_MODES, tutorItems, tutorRecord, tutorSessions, tutorMissing, tutorMonths, tutorName, tutorMinutes, tutorRate, monthOf, monthText, billDay, hoursText, dayShort, leaveBill, recentExits, blocksOf, free, deferred, remindDue, REMIND_AFTER, REMIND_EVERY, sentDay, notMarked, dayOf, dayText, dayNow, calendar, classKey, weekSessions, scheduleGaps, scheduleLessons, weekdays, ackKey, sentIndex, leaveStatus, classifyMoves, moveInputs, qrFromMessage, intakeDue, EXIT_ACCOUNT, NEW_TAB, EXIT_TAB, buildClass, dropGop, addGop, discInput, discText, discValue, planDiscount, locate, classRanges, freshRanges, freshAt, planPaid, planUnpaid, planOverride, findPeriodCol, colA1, quote, fmt, digits, clean, isPaid, todayText, ACTIVE };
+  return { intakeLeave, classLessonDays, dotEndDay, tickStatus, tickBill, parseBlocks, TUTOR_MODES, tutorItems, tutorRecord, tutorSessions, tutorMissing, tutorMonths, tutorName, tutorMinutes, tutorRate, monthOf, monthText, billDay, hoursText, dayShort, leaveBill, recentExits, blocksOf, free, deferred, remindDue, REMIND_AFTER, REMIND_EVERY, sentDay, notMarked, dayOf, dayText, dayNow, calendar, classKey, weekSessions, scheduleGaps, scheduleLessons, weekdays, ackKey, sentIndex, leaveStatus, classifyMoves, moveInputs, qrFromMessage, intakeDue, EXIT_ACCOUNT, NEW_TAB, EXIT_TAB, buildClass, dropGop, addGop, discInput, discText, discValue, planDiscount, locate, classRanges, freshRanges, freshAt, planPaid, planUnpaid, planOverride, findPeriodCol, colA1, quote, fmt, digits, clean, isPaid, todayText, ACTIVE };
 });
