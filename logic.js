@@ -543,6 +543,18 @@
     (ak || []).forEach(r => out.push(dayOf((r || [])[0])));
     return out.filter(d => !isNaN(d));
   }
+  /**
+   * The owner's rule (08/11/2026): the leaving date typed in the app is the first day the student no longer comes, so the
+   * last lesson attended is the class's last lesson before it. That day goes into H, where the Sheet reads "học đến hết ngày".
+   * A date after the last lesson the tab lists cannot be placed, so the day before it is used (the Sheet then asks to check).
+   */
+  function lastLessonBefore(lessons, dateText) {
+    const day = dayOf(dateText), days = [...new Set(lessons || [])].filter(d => !isNaN(d)).sort((a, b) => a - b);
+    if (isNaN(day)) return { text: dateText, known: false };
+    const before = days.filter(d => d < day);
+    if (!days.length || day > days[days.length - 1] || !before.length) return { text: dayText(day - 1), known: false };
+    return { text: dayText(before[before.length - 1]), known: true };
+  }
   /** The last lesson of the đợt a date falls in, from the history rows (row "đợt n" holds the lessons of đợt n-1); 0 when unknown. */
   function dotEndDay(hist, dateText) {
     const day = dayOf(dateText); if (isNaN(day)) return 0;
@@ -817,5 +829,5 @@
       v.sentAt || '', v.lan || '', v.by || '', v.paid || '', who || '', at || ''];
   }
 
-  return { intakeLeave, classLessonDays, dotEndDay, tickStatus, tickBill, parseBlocks, TUTOR_MODES, tutorItems, tutorRecord, tutorSessions, tutorMissing, tutorMonths, tutorName, tutorMinutes, tutorRate, monthOf, monthText, billDay, hoursText, dayShort, leaveBill, recentExits, blocksOf, free, deferred, remindDue, REMIND_AFTER, REMIND_EVERY, sentDay, notMarked, dayOf, dayText, dayNow, calendar, classKey, weekSessions, scheduleGaps, scheduleLessons, weekdays, ackKey, sentIndex, leaveStatus, classifyMoves, moveInputs, qrFromMessage, intakeDue, EXIT_ACCOUNT, NEW_TAB, EXIT_TAB, buildClass, dropGop, addGop, discInput, discText, discValue, planDiscount, locate, classRanges, freshRanges, freshAt, planPaid, planUnpaid, planOverride, findPeriodCol, colA1, quote, fmt, digits, clean, isPaid, todayText, ACTIVE };
+  return { lastLessonBefore, intakeLeave, classLessonDays, dotEndDay, tickStatus, tickBill, parseBlocks, TUTOR_MODES, tutorItems, tutorRecord, tutorSessions, tutorMissing, tutorMonths, tutorName, tutorMinutes, tutorRate, monthOf, monthText, billDay, hoursText, dayShort, leaveBill, recentExits, blocksOf, free, deferred, remindDue, REMIND_AFTER, REMIND_EVERY, sentDay, notMarked, dayOf, dayText, dayNow, calendar, classKey, weekSessions, scheduleGaps, scheduleLessons, weekdays, ackKey, sentIndex, leaveStatus, classifyMoves, moveInputs, qrFromMessage, intakeDue, EXIT_ACCOUNT, NEW_TAB, EXIT_TAB, buildClass, dropGop, addGop, discInput, discText, discValue, planDiscount, locate, classRanges, freshRanges, freshAt, planPaid, planUnpaid, planOverride, findPeriodCol, colA1, quote, fmt, digits, clean, isPaid, todayText, ACTIVE };
 });
