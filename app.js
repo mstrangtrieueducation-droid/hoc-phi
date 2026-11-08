@@ -989,7 +989,7 @@ function moThem() {
 }
 function moDuyet(m) {
   if (!m.manual) { $('dvChon').hidden = true; $('dvChon').replaceChildren(); }
-  dvMove = m; dvHist = null; dvBookList = ['']; veSachDuyet(m);
+  dvMove = m; dvHist = null; dvLessons = []; dvBookList = ['']; veSachDuyet(m);
   $('dvDate').value = isoOf(m.at); $('dvDate').max = '';
   $('dvDate').onchange = () => { if (m.kind === 'nghi' && dvHist) capNhatNghi(m); };
   $('duyet').dataset.id = m.id; dvSeen = '';
@@ -1005,16 +1005,16 @@ function veDuyet(m) {
   $('dvAcc').textContent = m.kind === 'nghi' ? 'Thu vào tài khoản: ' + L.EXIT_ACCOUNT : '';
   $('dvErr').textContent = '';
   $('dvLuu').hidden = false; $('dvLuu').disabled = false; $('dvLuu').className = 'primary'; $('dvKhongThu').hidden = true; $('dvLuu').textContent = moiTay ? 'Thêm và tạo tin nhắn' : 'Thêm vào danh sách thu';
-  $('dvStatus').textContent = m.manual && !ready ? (moiTay ? 'Chọn lớp, nhập họ tên rồi điền ngày.' : 'Chọn đủ ở trên rồi điền ngày.') : ''; dvHist = null;
+  $('dvStatus').textContent = m.manual && !ready ? (moiTay ? 'Chọn lớp, nhập họ tên rồi điền ngày.' : 'Chọn đủ ở trên rồi điền ngày.') : ''; dvHist = null; dvLessons = [];
   if (m.kind === 'nghi' && ready) {
     $('dvStatus').textContent = 'Đang xem em đã đóng đợt đó chưa…';
     $('dvLuu').disabled = true;
-    const q = L.quote(m.from), who = m.name + '|' + m.from + '|' + m.kind, wanted = [q + '!J18:N36'].concat(m.manual && m.row ? [q + '!F382:BM382', q + '!F' + m.row + ':BM' + m.row] : []);
+    const q = L.quote(m.from), who = m.name + '|' + m.from + '|' + m.kind, wanted = [q + '!J18:T36', q + '!AK20:AK39'].concat(m.manual && m.row ? [q + '!F382:BM382', q + '!F' + m.row + ':BM' + m.row] : []);
     batchGet(wanted).then(got => {
       if ($('duyet').dataset.id !== m.id || m.name + '|' + m.from + '|' + m.kind !== who) return;
-      if (m.manual) m.blocks = m.row ? L.blocksOf(got[1], got[2]) : null;
-      dvHist = got[0]; capNhatNghi(m);
-    }).catch(() => { dvHist = []; capNhatNghi(m); });
+      if (m.manual) m.blocks = m.row ? L.blocksOf(got[2], got[3]) : null;
+      dvHist = got[0]; dvLessons = L.classLessonDays(got[0], got[1]); capNhatNghi(m);
+    }).catch(() => { dvHist = []; dvLessons = []; capNhatNghi(m); });
   }
   // Preselect what the student already has in the class they come from or go to.
   // A typed new student has nothing to preselect, and each keystroke must not wipe a discount already chosen.
@@ -1025,7 +1025,7 @@ function veDuyet(m) {
     dvDisc = discPicker(had ? had.disc : ''); $('dvDisc').replaceChildren(dvDisc.node);
   }
 }
-let dvHist = null, dvBookList = [''], dvDisc = null, dvMove = null, dvSeen = '';
+let dvLessons = [], dvHist = null, dvBookList = [''], dvDisc = null, dvMove = null, dvSeen = '';
 /** Books are optional for every kind of move: one box, "+ Thêm sách" up to the 5 columns the tabs have. */
 function veSachDuyet(m) {
   const list = bookList || [], price = name => (list.find(b => b.name === name) || { price: 0 }).price;
@@ -1039,19 +1039,21 @@ function veSachDuyet(m) {
 const isoToText = iso => { const [y, m, d] = String(iso).split('-'); return iso ? d + '/' + m + '/' + y : ''; };
 /** Shows what the leaving date means for this student, and which action comes first. */
 function capNhatNghi(m) {
-  const r = L.leaveStatus(dvHist, m.blocks, isoToText($('dvDate').value)), dot = r.dot ? 'Đợt ' + r.dot : 'đợt này';
+  const cuoi = L.lastLessonBefore(dvLessons, isoToText($('dvDate').value));
+  const r = L.leaveStatus(dvHist, m.blocks, cuoi.text), dot = r.dot ? 'Đợt ' + r.dot : 'đợt này';
+  const cuoiDong = $('dvDate').value ? (cuoi.known ? ' Buổi cuối em học: ' + cuoi.text + '.' : ' Lịch trong tab lớp không có buổi trước ngày này, Sheet sẽ ghi ' + cuoi.text + '.') : '';
   const lich = r.noSchedule ? ' Lịch đợt này chưa có trong lớp nên Sheet sẽ báo cần kiểm tra. Sau khi thêm, vào mục Cần thu bấm "Tính theo Schedule".' : '';
   const coSach = dvBookList.some(Boolean);
   $('dvKhongThu').hidden = false; $('dvLuu').hidden = false; $('dvLuu').disabled = false; $('dvLuu').className = ''; $('dvKhongThu').className = '';
   $('dvKhongThu').textContent = coSach ? 'Đã đóng, chỉ thu tiền sách' : 'Đã đóng, không thu';
   if (r.state === 'da-dong') {
-    $('dvStatus').textContent = 'Ngày này thuộc ' + dot + ', em đã đóng học phí.' + (coSach ? ' Chỉ thu tiền sách đã chọn.' : ' Không thu gì thêm.');
+    $('dvStatus').textContent = 'Ngày này thuộc ' + dot + ', em đã đóng học phí.' + (coSach ? ' Chỉ thu tiền sách đã chọn.' : ' Không thu gì thêm.') + cuoiDong;
     $('dvKhongThu').className = 'primary'; $('dvLuu').textContent = 'Vẫn tính tiền';
   } else if (r.state === 'chua-dong') {
-    $('dvStatus').textContent = 'Ngày này thuộc ' + dot + ', em chưa đóng. Thu theo số buổi đã học.' + lich;
+    $('dvStatus').textContent = 'Ngày này thuộc ' + dot + ', em chưa đóng. Thu theo số buổi đã học.' + cuoiDong + lich;
     $('dvLuu').className = 'primary'; $('dvLuu').textContent = 'Thêm vào danh sách thu';
   } else {
-    $('dvStatus').textContent = 'Chưa rõ em đã đóng ' + dot + ' chưa (không có dữ liệu). Bạn kiểm tra rồi chọn.' + lich;
+    $('dvStatus').textContent = 'Chưa rõ em đã đóng ' + dot + ' chưa (không có dữ liệu). Bạn kiểm tra rồi chọn.' + cuoiDong + lich;
     $('dvLuu').textContent = 'Chưa đóng, tính tiền';
   }
 }
@@ -1085,7 +1087,12 @@ async function luuDuyet(onlyBooks) {
   const [y, mo, d] = iso.split('-');
   let disc;
   try { disc = dvDisc ? dvDisc.read() : ''; } catch (e) { $('dvErr').textContent = e.message; return; }
-  const input = L.moveInputs(m, { date: d + '/' + mo + '/' + y, books: dvBookList.filter(Boolean), onlyBooks: onlyBooks === true, disc });
+  // A leaver's date is the first day off; H gets the last lesson before it (owner 08/11/2026). Transfers keep the date as typed.
+  if (m.kind === 'nghi' && !dvLessons.length) {
+    try { const [h, ak] = await batchGet([L.quote(m.from) + '!J18:T36', L.quote(m.from) + '!AK20:AK39']); dvLessons = L.classLessonDays(h, ak); if (!dvHist || !dvHist.length) dvHist = h; } catch (e) { /* the day before is used */ }
+  }
+  const ngayNghi = d + '/' + mo + '/' + y, ngayGhi = m.kind === 'nghi' ? L.lastLessonBefore(dvLessons, ngayNghi).text : ngayNghi;
+  const input = L.moveInputs(m, { date: ngayGhi, books: dvBookList.filter(Boolean), onlyBooks: onlyBooks === true, disc });
   $('dvErr').textContent = 'Đang lưu…'; $('dvLuu').disabled = true;
   try {
     await ghiDongMoi(input);
@@ -1095,7 +1102,7 @@ async function luuDuyet(onlyBooks) {
       $('dvLuu').disabled = false;
       return moThiepMoi(m);
     }
-    const td = !m.manual || m.kind !== 'nghi' ? '' : await roiToanDien(m.from, m.name, m.eng, d + '/' + mo + '/' + y, m.td === 'het-dot' ? await hetDot(m.from, d + '/' + mo + '/' + y) : '');
+    const td = !m.manual || m.kind !== 'nghi' ? '' : await roiToanDien(m.from, m.name, m.eng, ngayNghi, m.td === 'het-dot' ? await hetDot(m.from, ngayGhi) : '');
     await loadMoves();
     notice('Đã thêm ' + m.name + ' vào tab ' + input.tab + '. Nếu chưa thấy số tiền ở mục Cần thu, đợi 1–2 phút rồi bấm Tải lại.' + (m.manual ? td || ' Khi kịp, nhớ cập nhật Theo dõi toàn diện.' : ''));
   } catch (e) { $('dvErr').textContent = 'Không lưu được: ' + e.message; }
