@@ -563,6 +563,16 @@
       .sort((a, b) => b.dot - a.dot)[0];
     return hit ? hit.to : 0;
   }
+  /**
+   * "Để đến hết đợt" (owner 08/11/2026): no leaving date is typed, the student studies to the end of the running đợt.
+   * The đợt that today falls in, else the class's last listed lesson when it is still ahead; 0 when neither is known.
+   */
+  function hetDotEnd(hist, lessons, today) {
+    const end = dotEndDay(hist, dayText(today));
+    if (end) return end;
+    const last = Math.max(...(lessons || []).filter(d => !isNaN(d)), -Infinity);
+    return last >= today ? last : 0;
+  }
 
   /** Unpaid rows of both intake tabs that are ready to collect or need checking. Rows come from row 3 (HS MỚI, A:U) and row 4 (HS NGHI, A:X). */
   function intakeDue(newRows, exitRows) {
@@ -829,5 +839,5 @@
       v.sentAt || '', v.lan || '', v.by || '', v.paid || '', who || '', at || ''];
   }
 
-  return { lastLessonBefore, intakeLeave, classLessonDays, dotEndDay, tickStatus, tickBill, parseBlocks, TUTOR_MODES, tutorItems, tutorRecord, tutorSessions, tutorMissing, tutorMonths, tutorName, tutorMinutes, tutorRate, monthOf, monthText, billDay, hoursText, dayShort, leaveBill, recentExits, blocksOf, free, deferred, remindDue, REMIND_AFTER, REMIND_EVERY, sentDay, notMarked, dayOf, dayText, dayNow, calendar, classKey, weekSessions, scheduleGaps, scheduleLessons, weekdays, ackKey, sentIndex, leaveStatus, classifyMoves, moveInputs, qrFromMessage, intakeDue, EXIT_ACCOUNT, NEW_TAB, EXIT_TAB, buildClass, dropGop, addGop, discInput, discText, discValue, planDiscount, locate, classRanges, freshRanges, freshAt, planPaid, planUnpaid, planOverride, findPeriodCol, colA1, quote, fmt, digits, clean, isPaid, todayText, ACTIVE };
+  return { hetDotEnd, lastLessonBefore, intakeLeave, classLessonDays, dotEndDay, tickStatus, tickBill, parseBlocks, TUTOR_MODES, tutorItems, tutorRecord, tutorSessions, tutorMissing, tutorMonths, tutorName, tutorMinutes, tutorRate, monthOf, monthText, billDay, hoursText, dayShort, leaveBill, recentExits, blocksOf, free, deferred, remindDue, REMIND_AFTER, REMIND_EVERY, sentDay, notMarked, dayOf, dayText, dayNow, calendar, classKey, weekSessions, scheduleGaps, scheduleLessons, weekdays, ackKey, sentIndex, leaveStatus, classifyMoves, moveInputs, qrFromMessage, intakeDue, EXIT_ACCOUNT, NEW_TAB, EXIT_TAB, buildClass, dropGop, addGop, discInput, discText, discValue, planDiscount, locate, classRanges, freshRanges, freshAt, planPaid, planUnpaid, planOverride, findPeriodCol, colA1, quote, fmt, digits, clean, isPaid, todayText, ACTIVE };
 });
