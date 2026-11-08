@@ -749,6 +749,7 @@ async function loadMoves() {
       due: L.intakeDue(news, exits), at: Date.now()
     };
     moves.events = events;
+    loadHenTD();
     notice('');
   } catch (e) { notice('Chưa đọc được biến động học sinh: ' + e.message, true); }
   movesLoading = false; render();
@@ -799,6 +800,8 @@ function renderMoves(box) {
   box.append(el('div', { class: 'card panel add-move' }, [el('div', {}, [el('b', { textContent: 'Có em mới, em nghỉ hoặc chuyển lớp?' }),
     el('div', { class: 'sub', textContent: 'Thêm trực tiếp ở đây, không cần chờ Theo dõi toàn diện. Khi toàn diện cập nhật sau, app biết là cùng một việc và không hỏi lại.' })]),
     el('div', { class: 'add-btns' }, [el('button', { class: 'primary', textContent: 'Thêm học sinh mới', onclick: moThemMoi }), el('button', { textContent: 'Thêm nghỉ / chuyển lớp', onclick: moThem })])]));
+  if (moves.hen && moves.hen.length) box.append(el('h2', { class: 'section', textContent: 'Hẹn xoá khỏi Theo dõi toàn diện (' + moves.hen.length + ')' }),
+    el('div', { class: 'fee-list' }, moves.hen.map(henRow)));
   const ready = moves.list.filter(m => !m.wait), waiting = moves.list.filter(m => m.wait);
   box.append(el('h2', { class: 'section', textContent: 'Cần duyệt (' + ready.length + ')' }));
   box.append(ready.length ? el('div', { class: 'fee-list' }, ready.map(moveRow)) : el('div', { class: 'empty small', textContent: 'Không có thay đổi nào cần duyệt.' }));
@@ -1080,10 +1083,49 @@ async function luuDuyet(onlyBooks) {
       $('dvLuu').disabled = false;
       return moThiepMoi(m);
     }
+    const td = m.manual && m.kind === 'nghi' ? await roiToanDien(m.from, m.name, m.eng, d + '/' + mo + '/' + y) : '';
     await loadMoves();
-    notice('Đã thêm ' + m.name + ' vào tab ' + input.tab + '. Nếu chưa thấy số tiền ở mục Cần thu, đợi 1–2 phút rồi bấm Tải lại.' + (m.manual ? ' Khi kịp, nhớ cập nhật Theo dõi toàn diện.' : ''));
+    notice('Đã thêm ' + m.name + ' vào tab ' + input.tab + '. Nếu chưa thấy số tiền ở mục Cần thu, đợi 1–2 phút rồi bấm Tải lại.' + (m.manual ? td || ' Khi kịp, nhớ cập nhật Theo dõi toàn diện.' : ''));
   } catch (e) { $('dvErr').textContent = 'Không lưu được: ' + e.message; }
   $('dvLuu').disabled = false;
+}
+/* ---------- "Nghỉ học" also takes the student off THEO DÕI TOÀN DIỆN (owner, 08/11/2026) ---------- */
+// The gateway copies the row to the file's "HS ĐÃ NGHỈ" tab, deletes it and numbers STT again. A student still studying
+// is booked instead and goes the first time the app opens after the date.
+async function roiToanDien(cls, name, eng, date) {
+  if (!linkKey) return ' Mở app bằng link riêng thì app mới tự xoá được em khỏi Theo dõi toàn diện, lần này hãy xoá tay.';
+  try {
+    const r = await cong({ op: 'roiTD', cls, name, eng, date });
+    if (r.hen) return ' Em vẫn ở Theo dõi toàn diện đến hết ngày ' + date + ', sau ngày đó app tự xoá và đánh lại STT (xem mục Hẹn xoá).';
+    if (r.ok) return ' Đã xoá em khỏi Theo dõi toàn diện ' + cls + ' và đánh lại STT, bản cũ cất ở tab HS ĐÃ NGHỈ của file đó.';
+    if (r.gone) return ' Theo dõi toàn diện ' + cls + ' đã không còn em này.';
+  } catch (e) { return ' Chưa xoá được khỏi Theo dõi toàn diện: ' + e.message; }
+  return '';
+}
+async function loadHenTD() {
+  if (!linkKey || !moves) return;
+  try { moves.hen = (await cong({ op: 'henTD' })).hen || []; } catch (e) { moves.hen = []; }
+  if (view === 'moves') render();
+}
+async function denHanTD() {
+  if (!linkKey) return;
+  let done = [];
+  try { done = (await cong({ op: 'denHanTD' })).done || []; } catch (e) { return; }
+  const ok = done.filter(r => r.ok || r.gone), bad = done.filter(r => r.error);
+  const parts = [ok.length ? 'Đã xoá khỏi Theo dõi toàn diện và đánh lại STT: ' + ok.map(r => fullName(r) + ' (' + r.cls + ')').join(', ') + '.' : '',
+    bad.length ? 'Chưa xoá được khỏi Theo dõi toàn diện: ' + bad.map(r => fullName(r) + ' (' + r.cls + '): ' + r.error).join('; ') + '.' : ''].filter(Boolean);
+  if (parts.length) notice(parts.join(' '), bad.length > 0);
+  if (done.length) loadHenTD();
+}
+function henRow(h) {
+  return el('div', { class: 'fee' }, [el('div', { class: 'r1' }, [el('span', { class: 'nm', textContent: fullName(h) + ' · ' + h.cls })]),
+    el('div', { class: 'sub', textContent: 'Xoá sau ngày ' + h.date + (h.by ? ', ' + h.by + ' bấm lúc ' + h.at : '') }),
+    h.loi ? el('div', { class: 'warn-line', textContent: 'Lần trước chưa xoá được: ' + h.loi }) : '',
+    el('div', { class: 'r3' }, [el('button', { class: 'quiet', textContent: 'Huỷ hẹn, giữ em trong Toàn diện', onclick: async e => {
+      e.target.disabled = true;
+      try { await cong({ op: 'huyTD', id: h.id }); notice('Đã huỷ hẹn xoá ' + fullName(h) + '.'); } catch (err) { notice('Không huỷ được: ' + err.message, true); }
+      loadHenTD();
+    } })])]);
 }
 /** Adds a row below the last used one and copies the formula columns from the row above, the way a person fills the tab down. */
 async function ghiDongMoi(input) {
@@ -1843,6 +1885,7 @@ async function afterLogin() {
   } catch (e) { notice('Chưa đọc được danh sách lớp: ' + e.message, true); }
   if (pending.length) flush();
   loadMoves();
+  denHanTD();
   loadWho();
   loadSent(true).then(flushSent);
   loadAck();
