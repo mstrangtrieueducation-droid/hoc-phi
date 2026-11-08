@@ -760,13 +760,20 @@ const tickErr = {};
 let tickBusy = false;
 async function docTick(it) {
   const q = L.quote(it.from), row = it.row;
-  const [heads, table, hist, cfg] = await batchGet([q + '!F382:BM382', q + '!B384:BM413', q + '!J18:N36', q + '!B5:B6']);
+  const [heads, table, hist, cfg, ak] = await batchGet([q + '!F382:BM382', q + '!B384:BM413', q + '!J18:T36', q + '!B5:B6', q + '!AK20:AK39']);
   const [[cell]] = await batchGet([L.quote(it.tab) + '!E' + row], 'FORMULA');
   const me = (table || []).find(r => L.clean(r[0]) === L.clean(it.name) && L.clean(r[1]) === L.clean(it.eng));
   const ev = !me && (moves.events || []).filter(r => r[2] === 'ra' && r[1] === it.from && L.clean(r[3]) === L.clean(it.name)).pop();
   const blocks = me ? L.blocksOf(heads, [me.slice(4)]) : ev ? L.parseBlocks(ev[8]) : null;
   if (!blocks) return { unknown: true };
   const status = L.tickStatus(hist, blocks, it.date);
+  // No tick in the class table but a paid intake on HS MỚI: the intake paid its lessons from the joining day (owner 08/11/2026, SAM).
+  const intake = it.kind !== 'chuyen' && !status.last && (moves.news || []).filter(r => r && r[1] === it.from && L.clean(r[2]) === L.clean(it.name) && (L.isPaid(r[16]) || r[17])).pop();
+  if (intake) {
+    const fee = L.digits((cfg[1] || [])[0]), account = (String(it.msg).match(/chuyển khoản vào (.+?) và gửi lại/) || [])[1] || '';
+    return { status, bill: L.intakeLeave({ join: L.dayOf(intake[4]), date: L.dayOf(it.date), lessons: L.classLessonDays(hist, ak), paid: Number(L.digits(intake[6])) || 20, fee, sessions: Number(L.digits((cfg[0] || [])[0])),
+      discCell: (cell || [])[0], bookFee: it.bookFee, bookList: it.bookList, name: it.name, eng: it.eng, cls: it.from, account }) };
+  }
   return { status, bill: L.tickBill({ kind: it.kind, name: it.name, eng: it.eng, from: it.from, cls: it.cls, date: it.date, used: it.used, fee: L.digits((cfg[1] || [])[0]), sessions: Number(L.digits((cfg[0] || [])[0])), msg: it.msg, bookFee: it.bookFee, bookList: it.bookList, discCell: (cell || [])[0], status }) };
 }
 /** The owner's rule: the ticks decide, so a bill that disagrees is corrected here without asking. Only a row that cannot be worked out is shown. */
@@ -970,9 +977,9 @@ function moThem() {
   });
   const denLop = lop('dvDen', 'Chuyển đến lớp', name => { m.to = name; veDuyet(m); });
   const denWrap = el('div', { hidden: true }, [el('label', { textContent: 'Chuyển đến lớp' }), denLop]);
-  // Owner 08/11/2026: a leaver is either taken off THEO DÕI TOÀN DIỆN at once or kept there; nothing is booked for later.
+  // Owner 08/11/2026: a leaver is taken off THEO DÕI TOÀN DIỆN at once, or stays until the đợt ends and is then taken off by the app.
   const tdChon = el('select', { id: 'dvTD', 'aria-label': 'Theo dõi toàn diện', onchange: e => { m.td = e.target.value; $('dvErr').textContent = ''; } },
-    [el('option', { value: '', textContent: 'Chọn xoá hay giữ' }), el('option', { value: 'xoa', textContent: 'Xoá khỏi Toàn diện ngay' }), el('option', { value: 'giu', textContent: 'Giữ lại trong Toàn diện' })]);
+    [el('option', { value: '', textContent: 'Chọn xoá ngay hay để hết đợt' }), el('option', { value: 'xoa', textContent: 'Xoá khỏi Toàn diện ngay' }), el('option', { value: 'het-dot', textContent: 'Để đến hết đợt, app tự xoá' })]);
   const tdWrap = el('div', {}, [el('label', { textContent: 'Theo dõi toàn diện' }), tdChon]);
   const loai = el('select', { id: 'dvLoai', 'aria-label': 'Việc', onchange: e => { m.kind = e.target.value; denWrap.hidden = m.kind !== 'chuyen'; tdWrap.hidden = m.kind !== 'nghi'; veDuyet(m); } },
     [el('option', { value: 'nghi', textContent: 'Nghỉ học' }), el('option', { value: 'chuyen', textContent: 'Chuyển lớp' })]);
@@ -1071,7 +1078,7 @@ async function luuDuyet(onlyBooks) {
     if (!m.from || !m.name) { $('dvErr').textContent = 'Hãy chọn lớp và học sinh.'; return; }
     if (m.kind === 'chuyen' && (!m.to || m.to === m.from)) { $('dvErr').textContent = 'Hãy chọn lớp chuyển đến, khác lớp đang học.'; return; }
     const same = (moves.exits || []).find(r => r && L.clean(r[1]) === L.clean(m.name) && String(r[23] || '') === m.from && String(r[5] || '') === (m.kind === 'chuyen' ? 'Chuyển lớp' : 'Nghỉ học'));
-    if (m.kind === 'nghi' && !m.td) { $('dvErr').textContent = 'Hãy chọn xoá hay giữ em trong Theo dõi toàn diện.'; return; }
+    if (m.kind === 'nghi' && !m.td) { $('dvErr').textContent = 'Hãy chọn xoá ngay hay để hết đợt mới xoá khỏi Theo dõi toàn diện.'; return; }
     if (same && !confirm(fullName(m) + ' đã có dòng ' + same[5] + ' từ ' + m.from + (same[7] ? ' ngày ' + same[7] : '') + '. Vẫn thêm dòng mới?')) return;
   }
   if (!iso) { $('dvErr').textContent = 'Hãy chọn ngày.'; return; }
@@ -1088,27 +1095,34 @@ async function luuDuyet(onlyBooks) {
       $('dvLuu').disabled = false;
       return moThiepMoi(m);
     }
-    const td = !m.manual || m.kind !== 'nghi' ? '' : m.td === 'xoa' ? await roiToanDien(m.from, m.name, m.eng, d + '/' + mo + '/' + y) : ' Em vẫn được giữ trong Theo dõi toàn diện.';
+    const td = !m.manual || m.kind !== 'nghi' ? '' : await roiToanDien(m.from, m.name, m.eng, d + '/' + mo + '/' + y, m.td === 'het-dot' ? await hetDot(m.from, d + '/' + mo + '/' + y) : '');
     await loadMoves();
     notice('Đã thêm ' + m.name + ' vào tab ' + input.tab + '. Nếu chưa thấy số tiền ở mục Cần thu, đợi 1–2 phút rồi bấm Tải lại.' + (m.manual ? td || ' Khi kịp, nhớ cập nhật Theo dõi toàn diện.' : ''));
   } catch (e) { $('dvErr').textContent = 'Không lưu được: ' + e.message; }
   $('dvLuu').disabled = false;
 }
 /* ---------- "Nghỉ học" also takes the student off THEO DÕI TOÀN DIỆN (owner, 08/11/2026) ---------- */
-// The gateway copies the row to the file's "HS ĐÃ NGHỈ" tab, deletes it and numbers STT again, at once (now: true), even
-// when the leaving date is still ahead. Bookings made before 08/11 afternoon still show and still run.
-async function roiToanDien(cls, name, eng, date) {
+// The gateway copies the row to the file's "HS ĐÃ NGHỈ" tab, deletes it and numbers STT again: at once (now: true), or after the
+// last lesson of the đợt (den), done the first time the app opens after that day.
+/** The last lesson of the đợt the leaving date falls in; the leaving date itself when the class history does not say. */
+async function hetDot(cls, date) {
+  let hist = dvHist;
+  if (!hist || !hist.length) { try { [hist] = await batchGet([L.quote(cls) + '!J18:N36']); } catch (e) { hist = []; } }
+  const end = L.dotEndDay(hist, date);
+  return end ? L.dayText(end) : date;
+}
+async function roiToanDien(cls, name, eng, date, den) {
   if (!linkKey) return ' Mở app bằng link riêng thì app mới tự xoá được em khỏi Theo dõi toàn diện, lần này hãy xoá tay.';
   const later = store.get('hp_td_retry') || [], key = cls + '|' + L.clean(name), keep = later.filter(x => x.key !== key);
   try {
-    const r = await cong({ op: 'roiTD', cls, name, eng, date, now: true });
+    const r = await cong(den ? { op: 'roiTD', cls, name, eng, date, den } : { op: 'roiTD', cls, name, eng, date, now: true });
     store.set('hp_td_retry', keep);
-    if (r.hen) return ' Em vẫn ở Theo dõi toàn diện đến hết ngày ' + date + ', sau ngày đó app tự xoá và đánh lại STT (xem mục Hẹn xoá).';
+    if (r.hen) return ' Em vẫn ở Theo dõi toàn diện đến hết đợt (buổi cuối ' + (r.den || den || date) + '), sau ngày đó app tự xoá và đánh lại STT (xem mục Hẹn xoá).';
     if (r.ok) return ' Đã xoá em khỏi Theo dõi toàn diện ' + cls + ' và đánh lại STT, bản cũ cất ở tab HS ĐÃ NGHỈ của file đó.';
     if (r.gone) return ' Theo dõi toàn diện ' + cls + ' đã không còn em này.';
   } catch (e) {
     // Google sometimes answers with an error page; the request is sent again the next time the app opens.
-    store.set('hp_td_retry', keep.concat({ key, cls, name, eng, date }));
+    store.set('hp_td_retry', keep.concat({ key, cls, name, eng, date, den: den || '' }));
     return ' Chưa xoá được khỏi Theo dõi toàn diện (' + e.message + '), lần mở app sau sẽ tự thử lại.';
   }
   return '';
@@ -1121,7 +1135,7 @@ async function loadHenTD() {
 async function denHanTD() {
   if (!linkKey) return;
   const retry = store.get('hp_td_retry') || [];
-  for (const x of retry) { const t = await roiToanDien(x.cls, x.name, x.eng, x.date); if (!/tự thử lại/.test(t)) notice(fullName(x) + ' (' + x.cls + '):' + t); }
+  for (const x of retry) { const t = await roiToanDien(x.cls, x.name, x.eng, x.date, x.den); if (!/tự thử lại/.test(t)) notice(fullName(x) + ' (' + x.cls + '):' + t); }
   let done = [];
   try { done = (await cong({ op: 'denHanTD' })).done || []; } catch (e) { return; }
   const ok = done.filter(r => r.ok || r.gone), bad = done.filter(r => r.error);
@@ -1132,7 +1146,7 @@ async function denHanTD() {
 }
 function henRow(h) {
   return el('div', { class: 'fee' }, [el('div', { class: 'r1' }, [el('span', { class: 'nm', textContent: fullName(h) + ' · ' + h.cls })]),
-    el('div', { class: 'sub', textContent: 'Xoá sau ngày ' + h.date + (h.by ? ', ' + h.by + ' bấm lúc ' + h.at : '') }),
+    el('div', { class: 'sub', textContent: 'Nghỉ từ ' + h.date + ', xoá sau ngày ' + (h.den || h.date) + (h.by ? ', ' + h.by + ' bấm lúc ' + h.at : '') }),
     h.loi ? el('div', { class: 'warn-line', textContent: 'Lần trước chưa xoá được: ' + h.loi }) : '',
     el('div', { class: 'r3' }, [el('button', { class: 'quiet', textContent: 'Huỷ hẹn, giữ em trong Toàn diện', onclick: async e => {
       e.target.disabled = true;
