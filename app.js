@@ -1112,8 +1112,8 @@ async function luuDuyet(onlyBooks) {
 // The gateway copies the row to the file's "HS ĐÃ NGHỈ" tab, deletes it and numbers STT again: at once (now: true), or after the
 // last lesson of the đợt (den), done the first time the app opens after that day.
 /** The last lesson of the đợt the leaving date falls in; the leaving date itself when the class history does not say. */
-async function hetDot(cls, date) {
-  let hist = dvHist;
+async function hetDot(cls, date, fresh) {
+  let hist = fresh ? null : dvHist;
   if (!hist || !hist.length) { try { [hist] = await batchGet([L.quote(cls) + '!J18:N36']); } catch (e) { hist = []; } }
   const end = L.dotEndDay(hist, date);
   return end ? L.dayText(end) : date;
@@ -1142,7 +1142,8 @@ async function loadHenTD() {
 async function denHanTD() {
   if (!linkKey) return;
   const retry = store.get('hp_td_retry') || [];
-  for (const x of retry) { const t = await roiToanDien(x.cls, x.name, x.eng, x.date, x.den); if (!/tự thử lại/.test(t)) notice(fullName(x) + ' (' + x.cls + '):' + t); }
+  for (const x of retry) { // A retry saved before 08/11 evening has no den: the owner never chose, so it waits for the end of the đợt.
+    const t = await roiToanDien(x.cls, x.name, x.eng, x.date, x.den === undefined ? await hetDot(x.cls, x.date, true) : x.den); if (!/tự thử lại/.test(t)) notice(fullName(x) + ' (' + x.cls + '):' + t); }
   let done = [];
   try { done = (await cong({ op: 'denHanTD' })).done || []; } catch (e) { return; }
   const ok = done.filter(r => r.ok || r.gone), bad = done.filter(r => r.error);
