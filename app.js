@@ -970,9 +970,13 @@ function moThem() {
   });
   const denLop = lop('dvDen', 'Chuyển đến lớp', name => { m.to = name; veDuyet(m); });
   const denWrap = el('div', { hidden: true }, [el('label', { textContent: 'Chuyển đến lớp' }), denLop]);
-  const loai = el('select', { id: 'dvLoai', 'aria-label': 'Việc', onchange: e => { m.kind = e.target.value; denWrap.hidden = m.kind !== 'chuyen'; veDuyet(m); } },
+  // Owner 08/11/2026: a leaver is either taken off THEO DÕI TOÀN DIỆN at once or kept there; nothing is booked for later.
+  const tdChon = el('select', { id: 'dvTD', 'aria-label': 'Theo dõi toàn diện', onchange: e => { m.td = e.target.value; $('dvErr').textContent = ''; } },
+    [el('option', { value: '', textContent: 'Chọn xoá hay giữ' }), el('option', { value: 'xoa', textContent: 'Xoá khỏi Toàn diện ngay' }), el('option', { value: 'giu', textContent: 'Giữ lại trong Toàn diện' })]);
+  const tdWrap = el('div', {}, [el('label', { textContent: 'Theo dõi toàn diện' }), tdChon]);
+  const loai = el('select', { id: 'dvLoai', 'aria-label': 'Việc', onchange: e => { m.kind = e.target.value; denWrap.hidden = m.kind !== 'chuyen'; tdWrap.hidden = m.kind !== 'nghi'; veDuyet(m); } },
     [el('option', { value: 'nghi', textContent: 'Nghỉ học' }), el('option', { value: 'chuyen', textContent: 'Chuyển lớp' })]);
-  $('dvChon').replaceChildren(el('label', { textContent: 'Việc' }), loai, el('label', { textContent: 'Lớp đang học' }), tuLop, el('label', { textContent: 'Học sinh' }), hs, ten, eng, denWrap);
+  $('dvChon').replaceChildren(el('label', { textContent: 'Việc' }), loai, el('label', { textContent: 'Lớp đang học' }), tuLop, el('label', { textContent: 'Học sinh' }), hs, ten, eng, denWrap, tdWrap);
   $('dvChon').hidden = false;
   moDuyet(m);
 }
@@ -1067,6 +1071,7 @@ async function luuDuyet(onlyBooks) {
     if (!m.from || !m.name) { $('dvErr').textContent = 'Hãy chọn lớp và học sinh.'; return; }
     if (m.kind === 'chuyen' && (!m.to || m.to === m.from)) { $('dvErr').textContent = 'Hãy chọn lớp chuyển đến, khác lớp đang học.'; return; }
     const same = (moves.exits || []).find(r => r && L.clean(r[1]) === L.clean(m.name) && String(r[23] || '') === m.from && String(r[5] || '') === (m.kind === 'chuyen' ? 'Chuyển lớp' : 'Nghỉ học'));
+    if (m.kind === 'nghi' && !m.td) { $('dvErr').textContent = 'Hãy chọn xoá hay giữ em trong Theo dõi toàn diện.'; return; }
     if (same && !confirm(fullName(m) + ' đã có dòng ' + same[5] + ' từ ' + m.from + (same[7] ? ' ngày ' + same[7] : '') + '. Vẫn thêm dòng mới?')) return;
   }
   if (!iso) { $('dvErr').textContent = 'Hãy chọn ngày.'; return; }
@@ -1083,20 +1088,20 @@ async function luuDuyet(onlyBooks) {
       $('dvLuu').disabled = false;
       return moThiepMoi(m);
     }
-    const td = m.manual && m.kind === 'nghi' ? await roiToanDien(m.from, m.name, m.eng, d + '/' + mo + '/' + y) : '';
+    const td = !m.manual || m.kind !== 'nghi' ? '' : m.td === 'xoa' ? await roiToanDien(m.from, m.name, m.eng, d + '/' + mo + '/' + y) : ' Em vẫn được giữ trong Theo dõi toàn diện.';
     await loadMoves();
     notice('Đã thêm ' + m.name + ' vào tab ' + input.tab + '. Nếu chưa thấy số tiền ở mục Cần thu, đợi 1–2 phút rồi bấm Tải lại.' + (m.manual ? td || ' Khi kịp, nhớ cập nhật Theo dõi toàn diện.' : ''));
   } catch (e) { $('dvErr').textContent = 'Không lưu được: ' + e.message; }
   $('dvLuu').disabled = false;
 }
 /* ---------- "Nghỉ học" also takes the student off THEO DÕI TOÀN DIỆN (owner, 08/11/2026) ---------- */
-// The gateway copies the row to the file's "HS ĐÃ NGHỈ" tab, deletes it and numbers STT again. A student still studying
-// is booked instead and goes the first time the app opens after the date.
+// The gateway copies the row to the file's "HS ĐÃ NGHỈ" tab, deletes it and numbers STT again, at once (now: true), even
+// when the leaving date is still ahead. Bookings made before 08/11 afternoon still show and still run.
 async function roiToanDien(cls, name, eng, date) {
   if (!linkKey) return ' Mở app bằng link riêng thì app mới tự xoá được em khỏi Theo dõi toàn diện, lần này hãy xoá tay.';
   const later = store.get('hp_td_retry') || [], key = cls + '|' + L.clean(name), keep = later.filter(x => x.key !== key);
   try {
-    const r = await cong({ op: 'roiTD', cls, name, eng, date });
+    const r = await cong({ op: 'roiTD', cls, name, eng, date, now: true });
     store.set('hp_td_retry', keep);
     if (r.hen) return ' Em vẫn ở Theo dõi toàn diện đến hết ngày ' + date + ', sau ngày đó app tự xoá và đánh lại STT (xem mục Hẹn xoá).';
     if (r.ok) return ' Đã xoá em khỏi Theo dõi toàn diện ' + cls + ' và đánh lại STT, bản cũ cất ở tab HS ĐÃ NGHỈ của file đó.';
