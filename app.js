@@ -1094,12 +1094,18 @@ async function luuDuyet(onlyBooks) {
 // is booked instead and goes the first time the app opens after the date.
 async function roiToanDien(cls, name, eng, date) {
   if (!linkKey) return ' Mở app bằng link riêng thì app mới tự xoá được em khỏi Theo dõi toàn diện, lần này hãy xoá tay.';
+  const later = store.get('hp_td_retry') || [], key = cls + '|' + L.clean(name), keep = later.filter(x => x.key !== key);
   try {
     const r = await cong({ op: 'roiTD', cls, name, eng, date });
+    store.set('hp_td_retry', keep);
     if (r.hen) return ' Em vẫn ở Theo dõi toàn diện đến hết ngày ' + date + ', sau ngày đó app tự xoá và đánh lại STT (xem mục Hẹn xoá).';
     if (r.ok) return ' Đã xoá em khỏi Theo dõi toàn diện ' + cls + ' và đánh lại STT, bản cũ cất ở tab HS ĐÃ NGHỈ của file đó.';
     if (r.gone) return ' Theo dõi toàn diện ' + cls + ' đã không còn em này.';
-  } catch (e) { return ' Chưa xoá được khỏi Theo dõi toàn diện: ' + e.message; }
+  } catch (e) {
+    // Google sometimes answers with an error page; the request is sent again the next time the app opens.
+    store.set('hp_td_retry', keep.concat({ key, cls, name, eng, date }));
+    return ' Chưa xoá được khỏi Theo dõi toàn diện (' + e.message + '), lần mở app sau sẽ tự thử lại.';
+  }
   return '';
 }
 async function loadHenTD() {
@@ -1109,6 +1115,8 @@ async function loadHenTD() {
 }
 async function denHanTD() {
   if (!linkKey) return;
+  const retry = store.get('hp_td_retry') || [];
+  for (const x of retry) { const t = await roiToanDien(x.cls, x.name, x.eng, x.date); if (!/tự thử lại/.test(t)) notice(fullName(x) + ' (' + x.cls + '):' + t); }
   let done = [];
   try { done = (await cong({ op: 'denHanTD' })).done || []; } catch (e) { return; }
   const ok = done.filter(r => r.ok || r.gone), bad = done.filter(r => r.error);
