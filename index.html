@@ -164,7 +164,10 @@
   .hint { margin-top: 4px; font-size: 13px; color: var(--warn); }
   .acts { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; }
   .acts button { flex: 1 1 130px; }
-  #edErr, #dvErr { min-height: 20px; margin-top: 8px; font-size: 14px; color: var(--bad); }
+  #tlForm select { width: 100%; min-height: 44px; padding: 6px 10px; border: 1px solid var(--line); border-radius: 10px; background: var(--bg); color: var(--ink); }
+  #tlForm .two { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  #tlStatus { color: var(--muted); white-space: pre-line; }
+  #edErr, #dvErr, #tlErr { min-height: 20px; margin-top: 8px; font-size: 14px; color: var(--bad); }
   .section { font-size: 16px; font-weight: 700; margin: 18px 0 8px; }
   .empty.small { padding: 16px; }
   .books { display: grid; gap: 6px; }
@@ -536,6 +539,17 @@
     <button id="dvHuy">Huỷ</button>
   </div>
   <div id="dvErr" role="status"></div>
+</dialog>
+<dialog id="taoLop" aria-labelledby="tlTen">
+  <h2 id="tlTen">Tạo lớp mới</h2>
+  <div id="tlForm"></div>
+  <div class="hint" id="tlStatus" role="status"></div>
+  <div class="acts">
+    <button id="tlLuu" class="primary">Điền vào Sheet</button>
+    <button id="tlMo" class="primary" hidden>Mở Sheet, tick ô tạo lớp</button>
+    <button id="tlHuy">Đóng</button>
+  </div>
+  <div id="tlErr" role="status"></div>
 </dialog>
 <dialog id="thiepDlg" aria-labelledby="thiepTen">
   <h2 id="thiepTen"></h2>
