@@ -4,6 +4,8 @@ const CONFIG = window.HP_CONFIG;
 (function () {
   if (!('serviceWorker' in navigator) || location.protocol !== 'https:' && location.hostname !== 'localhost') return;
   try { navigator.serviceWorker.register('sw.js').catch(() => {}); } catch (e) { return; }
+  // Ask the worker whether the copy it just fetched behind this page is newer (sw.js answers 'app-updated').
+  try { navigator.serviceWorker.ready.then(() => { const c = navigator.serviceWorker.controller; if (c) c.postMessage({ type: 'check' }); }).catch(() => {}); } catch (e) {}
   navigator.serviceWorker.addEventListener('message', e => {
     if (!e.data || e.data.type !== 'app-updated') return;
     let last = 0; try { last = Number(sessionStorage.getItem('swReloadAt')) || 0; } catch (err) {}
