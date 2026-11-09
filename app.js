@@ -1,5 +1,6 @@
 // Web app UI. All data comes from the Sheets API, through the personal-link gateway (or the Google sign-in kept as a spare); there is no server.
 const CONFIG = window.HP_CONFIG;
+try { if (window.self !== window.top) document.documentElement.classList.add('framed'); } catch (e) { document.documentElement.classList.add('framed'); }
 const SHEET_API = 'https://sheets.googleapis.com/v4/spreadsheets/' + CONFIG.sheetId;
 const SCHEDULE_API = 'https://sheets.googleapis.com/v4/spreadsheets/' + CONFIG.scheduleId;
 const LOG_API = 'https://sheets.googleapis.com/v4/spreadsheets/' + CONFIG.logId;
@@ -165,7 +166,7 @@ const cuCu = c => c.data.items.length > 0 && !('disc' in c.data.items[0]);
 function applyTheme(choice) {
   const dark = choice === 'dark';
   document.documentElement.dataset.theme = dark ? 'dark' : 'light';
-  const b = $('btnTheme'); if (b) b.textContent = dark ? 'Nền sáng' : 'Nền tối';
+  const b = $('btnTheme'); if (b) { b.innerHTML = dark ? '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4.5"/><path d="M12 1.5v2.5M12 20v2.5M4.6 4.6l1.8 1.8M17.6 17.6l1.8 1.8M1.5 12h2.5M20 12h2.5M4.6 19.4l1.8-1.8M17.6 6.4l1.8-1.8"/></svg>' : '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>'; const l = dark ? 'Nền sáng' : 'Nền tối'; b.setAttribute('aria-label', l); b.title = l; }
 }
 async function openClass(name, force) {
   const seq = ++loadSeq;
@@ -1212,7 +1213,7 @@ async function boQuaMove(m) {
   try { await batchWrite(m.rows.map(r => ({ range: "'_BIEN_DONG_HS'!H" + r, values: [['bo-qua']] }))); await loadMoves(); }
   catch (e) { notice('Không lưu được: ' + e.message, true); }
 }
-function stat(value, label, alert) { return el('div', { class: alert ? 'stat card alert' : 'stat card' }, [el('b', { textContent: value }), el('span', { textContent: label })]); }
+function stat(value, label, alert, tone) { return el('div', { class: (alert ? 'stat card alert' : 'stat card') + (tone ? ' t-' + tone : '') }, [el('b', { textContent: value }), el('span', { textContent: label })]); }
 
 const classRows = () => classes.map(name => { const c = store.get('hp_cls_' + name); return { name, data: c && c.data }; });
 const updatedText = () => { const at = store.get('hp_all_at'); return loadingAll ? 'Đang cập nhật ' + loadedCount + ' / ' + loadTotal + ' lớp, vẫn bấm vào lớp được…' : at ? 'Cập nhật lúc ' + new Date(at).toLocaleString('vi-VN', { hour: '2-digit', minute: '2-digit', day: '2-digit', month: '2-digit' }) : 'Chưa đọc đủ các lớp'; };
@@ -1298,10 +1299,17 @@ function renderHome(box) {
   const now = allNow.filter(x => !daGuiHet(x)), soon = allSoon.filter(x => !daGuiHet(x)), sentDone = allNow.concat(allSoon).filter(daGuiHet);
   const nhacLai = sentAt || sentRows.length ? nhacLaiRows() : [];
   const notSent = chuaDanhDau(), dueUnsent = moves ? moves.due.filter(it => !it.problem && !dueMark(it)) : [], moveCount = moves ? moves.list.filter(m => !m.wait).length + moves.due.length : 0;
+  const got = add(s => s.got), late = nhacLai.reduce((n, c) => n + c.list.filter(r => !r.blank).reduce((m, r) => m + ((r.item && r.item.amount) || 0), 0), 0), lateN = nhacLai.reduce((n, c) => n + c.list.filter(r => !r.blank).length, 0);
+  const kpis = el('div', { class: 'kpi4' }, [
+    kpi('wallet', 'indigo', 'Tổng dự thu', L.fmt(got + owe) + ' đ', known.length + ' lớp đã đọc'),
+    kpi('trend', 'green', 'Đã thu', L.fmt(got) + ' đ', add(s => s.paid) + ' em'),
+    kpi('hourglass', 'amber', 'Chờ thu', L.fmt(Math.max(0, owe - blankOwe - late)) + ' đ', blankOwe ? '+ ' + L.fmt(blankOwe) + ' đ chưa ghi' : ''),
+    kpi('siren', late ? 'red' : 'green', 'Nợ quá hạn', L.fmt(late) + ' đ', lateN + ' em gửi quá ' + L.REMIND_AFTER + ' ngày')]);
   box.append(
     el('div', { class: 'page-title' }, [
       el('div', {}, [el('h1', { textContent: 'Việc cần làm' }), el('div', { class: 'sub', textContent: updatedText() })]),
       el('div', { class: 'add-btns' }, [el('button', { class: 'act', textContent: 'Thêm học sinh mới', onclick: async () => { goTo('moves'); if (!moves) await loadMoves(); if (moves) moThemMoi(); } }), updateButton()])]),
+    kpis,
     el('div', { class: 'tiles' }, [
       tile(now.length, 'Lớp đến hạn thu', true, openCal),
       tile(notSent.reduce((n, r) => n + (r.left ? r.left.length : 1), 0) + dueUnsent.length, 'Chưa tick đã gửi Zalo', true, () => { const s = $('nhacGui'); if (s) s.scrollIntoView({ behavior: 'smooth' }); }),
@@ -1309,8 +1317,8 @@ function renderHome(box) {
       tile(soon.length, 'Lớp sắp thu', false, openCal),
       tile(blankAll, 'Em chưa ghi nộp', false, () => { lopFilter = 'ghi'; goTo('lop'); }),
       tile(moveCount, 'Biến động cần xử lý', true, () => { goTo('moves'); if (!moves || Date.now() - moves.at > FRESH_MS) loadMoves(); }),
-      tile(tutorViec().left.length, 'Tutor chưa thu', true, openTutor)]),
-    el('div', { class: 'stats' }, [stat(L.fmt(owe - blankOwe) + ' đ', 'Đã rõ chưa nộp'), stat(L.fmt(blankOwe) + ' đ', 'Chưa ghi, có thể đã nộp'), stat(String(flagged), 'Số tiền cần xem lại', flagged > 0)]));
+      tile(tutorViec().left.length, 'Tutor chưa thu', true, openTutor),
+      tile(flagged, 'Số tiền cần xem lại', true, () => { lopFilter = 'all'; goTo('lop'); })]));
   if (!tutor && !tutorLoading) loadTutor();
   const tutorNhac = tutorViec().nhac;
   if (tutorNhac.length) box.append(el('div', { class: 'warn-line', style: 'margin:0 0 12px' }, ['Tutor: ' + tutorNhac.length + ' em gửi quá ' + L.REMIND_AFTER + ' ngày chưa thấy nộp.', el('button', { class: 'quiet', textContent: 'Xem', onclick: openTutor })]));
@@ -1532,9 +1540,9 @@ function renderTutor(box) {
   const nhacs = {}; L.remindDue(due, tutorMarks(due), today, NaN).forEach(n => { nhacs[n.item.key] = n; });
   box.append(el('div', { class: 'seg tt-months', style: 'grid-template-columns:repeat(' + months.length + ',1fr)' }, months.map(m => el('button', { textContent: 'Tháng ' + m.slice(5) + '/' + m.slice(2, 4), 'aria-pressed': String(m === tutorMonth), onclick: () => { tutorMonth = m; tutorOpen = ''; tutorFilter = ''; render(); } }))));
   box.append(el('div', { class: 'stats' }, [
-    stat(L.dayText(L.billDay(tutorMonth)), finished ? 'Ngày thu' : 'Ngày thu, tháng chưa xong'),
-    stat(L.fmt(sum(got)) + ' đ', 'Đã thu · ' + got.length + ' em'),
-    stat(L.fmt(sum(due)) + ' đ', (finished ? 'Còn phải thu · ' : 'Tạm tính · ') + due.length + ' em', finished && due.length > 0)]));
+    stat(L.dayText(L.billDay(tutorMonth)), finished ? 'Ngày thu' : 'Ngày thu, tháng chưa xong', false, 'indigo'),
+    stat(L.fmt(sum(got)) + ' đ', 'Đã thu · ' + got.length + ' em', false, 'green'),
+    stat(L.fmt(sum(due)) + ' đ', (finished ? 'Còn phải thu · ' : 'Tạm tính · ') + due.length + ' em', finished && due.length > 0, 'red')]));
   const missing = L.tutorMissing(tutor.weeks, tutorMonth, today);
   if (missing.length) box.append(el('div', { class: 'warn-line', style: 'margin:0 0 12px', textContent: 'Schedule chưa có tuần cho ' + missing.length + ' ngày trong tháng, từ ' + L.dayText(missing[0]) + ' đến ' + L.dayText(missing[missing.length - 1]) + '. Số buổi có thể thiếu.' }));
   const noPrice = items.filter(x => x.trong && (x.count > 0 || !finished)), free = items.filter(x => x.mien);
@@ -1565,6 +1573,7 @@ function renderLop(box) {
   box.append(q, el('div', { class: 'filters' }, [pick('all', 'Tất cả'), pick('owe', 'Còn phải thu'), pick('ghi', 'Có em chưa ghi')]), grid);
   fillGrid(grid, rows);
 }
+const kindOfName = n => /^KIDS/i.test(n) ? 'kids' : /^IELTS/i.test(n) ? 'ielts' : /^FIGHTER/i.test(n) ? 'fighter' : /^TA\s*\d/i.test(n) ? 'ta' : /TUTOR/i.test(n) ? 'tutor' : 'other';
 function fillGrid(grid, rows) {
   const t = query.trim().toLowerCase();
   const keep = r => { if (t && !r.name.toLowerCase().includes(t)) return false; if (lopFilter === 'all') return true; if (!r.data) return false; const s = summarize(r.data); return lopFilter === 'ghi' ? s.blank > 0 : s.owe > 0; };
@@ -1578,7 +1587,7 @@ function fillGrid(grid, rows) {
       if (s.warn) low.push(el('span', { class: 'flag', textContent: s.warn + ' em cần xem lại số tiền' }));
       kids.push(el('div', { class: 'low' }, low));
     }
-    return el('button', { class: 'class', onclick: () => { tab = 'thu'; filter = 'can'; openClass(r.name); } }, kids);
+    return el('button', { class: 'class k-' + kindOfName(r.name), onclick: () => { tab = 'thu'; filter = 'can'; openClass(r.name); } }, kids);
   }));
 }
 function renderClass(box) {
@@ -1719,11 +1728,15 @@ function renderThu(box) {
   const before = cur.items.filter(x => x.prev && !L.free(x) && (x.prev.amount > 0 || x.prev.paid)).sort((a, b) => a.prev.paid - b.prev.paid);
   if (filter === 'truoc' && !before.length) filter = 'can';
   groups.truoc = before;
-  box.append(el('div', { class: 'filters' }, [chip('can', 'Chưa thu'), chip('ghi', 'Chưa ghi'), chip('xem', 'Cần xem lại'), chip('da', 'Đã nộp'), groups.hoan.length ? chip('hoan', 'Chưa thu ngay') : '', groups.roi.length ? chip('roi', 'Đã nghỉ, chuyển') : '',
+  groups.all = cur.items;
+  box.append(el('div', { class: 'filters' }, [chip('all', 'Tất cả'), chip('can', 'Chưa thu'), chip('ghi', 'Chưa ghi'), chip('xem', 'Cần xem lại'), chip('da', 'Đã nộp'), groups.hoan.length ? chip('hoan', 'Chưa thu ngay') : '', groups.roi.length ? chip('roi', 'Đã nghỉ, chuyển') : '',
     before.length ? el('button', { textContent: 'Đợt ' + before[0].prev.dot + ' chưa nộp ' + before.filter(x => !x.prev.paid).length, 'aria-pressed': String(filter === 'truoc'), onclick: () => { filter = 'truoc'; render(); } }) : '']));
   const list = groups[filter];
   if (!list.length) { box.append(el('div', { class: 'empty', textContent: filter === 'can' ? 'Lớp này đã nộp đủ đợt ' + cur.dot + '.' : filter === 'da' ? 'Chưa có em nào nộp đợt ' + cur.dot + '.' : filter === 'ghi' ? 'Không có em nào chưa ghi.' : 'Không có em nào cần xem lại.' })); return; }
-  box.append(el('div', { class: 'fee-list' }, list.map(filter === 'truoc' ? prevRow : feeRow)));
+  if (filter === 'truoc') { box.append(el('div', { class: 'fee-list' }, list.map(prevRow))); return; }
+  box.append(feeTable(list));
+  const open = feeOpen && cur.items.find(x => x.key === feeOpen);
+  if (open) box.append(feeDrawer(open)); else feeOpen = null;
 }
 const nhacOf = it => nhacCua(cur).find(r => r.item.key === it.key);
 const nhacLine = (it, style) => {
@@ -1765,6 +1778,51 @@ function discLine(it) {
   const p = discPicker(it.disc), msg = el('span', { class: 'sub', role: 'status' });
   return el('div', { class: 'r3', style: 'flex-wrap:wrap' }, [p.node, el('button', { class: 'act', textContent: 'Lưu', onclick: () => luuGiam(it, p, msg) }), el('button', { class: 'quiet', textContent: 'Huỷ', onclick: () => { discOpen = null; render(); } }), msg]);
 }
+/* ---------- Thu tiền as a table (owner 09/11) ---------- */
+const AV = ['#4F46E5', '#0284C7', '#059669', '#D97706', '#DB2777', '#7C3AED', '#0D9488', '#E11D48'];
+const avColor = s => { let n = 0; String(s).split('').forEach(c => { n = (n * 31 + c.charCodeAt(0)) >>> 0; }); return AV[n % AV.length]; };
+const SVG = {
+  wallet: '<rect x="2" y="5" width="20" height="14" rx="2"/><path d="M2 10h20M16 15h2"/>',
+  trend: '<path d="M3 17l6-6 4 4 8-8"/><path d="M14 7h7v7"/>',
+  hourglass: '<path d="M6 2h12M6 22h12M7 2c0 5 10 5 10 10S7 17 7 22M17 2c0 5-10 5-10 10s10 5 10 10"/>',
+  siren: '<path d="M7 18v-6a5 5 0 0 1 10 0v6"/><path d="M5 21h14M12 2v2M4.2 5.2l1.4 1.4M19.8 5.2l-1.4 1.4M3 18h18"/>'
+};
+const svg = k => { const s = document.createElementNS('http://www.w3.org/2000/svg', 'svg'); s.setAttribute('viewBox', '0 0 24 24'); s.setAttribute('aria-hidden', 'true'); s.innerHTML = SVG[k]; return s; };
+const kpi = (icon, tone, label, value, sub) => el('div', { class: 'kpi4c t-' + tone }, [el('span', { class: 'kpi4i' }, [svg(icon)]), el('div', {}, [el('span', { class: 'kpi4l', textContent: label }), el('b', { textContent: value }), sub ? el('small', { textContent: sub }) : ''])]);
+/** Status pill: Đã đóng, Chờ thu, Quá hạn (sent more than REMIND_AFTER days ago and still "Chưa nộp"), Chưa ghi (never called unpaid), and the rest. */
+function feePill(it) {
+  const gone = !it.paid && daRoi(it);
+  if (gone) return ['idle', gone.kind === 'Chuyển lớp' ? 'Chuyển lớp' : 'Nghỉ học'];
+  if (L.free(it)) return ['idle', 'Miễn phí'];
+  if (it.paid) return ['ok', '✓ Đã đóng'];
+  if (L.deferred(it)) return ['idle', 'Chưa thu ngay'];
+  if (chuaGhi(it)) return ['idle', 'Chưa ghi'];
+  return nhacOf(it) ? ['bad', '! Quá hạn'] : ['wait', '⏳ Chờ thu'];
+}
+let feeOpen = null, feeQ = '';
+function feeTable(list) {
+  const rows = list.map(it => {
+    const [tone, text] = feePill(it), name = it.eng || it.name, flag = canThu(it) && (it.warn || it.trong || it.gop);
+    return el('div', { class: 'ft-row' + (it.paid ? ' paid' : ''), 'data-q': (it.name + ' ' + (it.eng || '')).toLowerCase(), role: 'row' }, [
+      el('span', { class: 'ft-who' }, [el('i', { style: 'background:' + avColor(it.name), textContent: String(name).trim().charAt(0).toUpperCase() }), el('span', {}, [el('b', { textContent: fullName(it) }), el('small', { textContent: cur.tab + (flag ? ' · cần xem lại' : '') })])]),
+      el('span', { class: 'ft-amt', textContent: L.free(it) || daRoi(it) ? '—' : money(it.amount) || (L.deferred(it) ? '—' : 'Chưa có số') }),
+      el('span', { class: 'ft-st' }, [el('span', { class: 'pill p-' + tone, textContent: text })]),
+      el('button', { class: 'quiet ft-go', textContent: 'Chi tiết ▸', onclick: () => { feeOpen = it.key; render(); } })]);
+  });
+  const q = el('input', { class: 'search ft-search', type: 'search', value: feeQ, placeholder: 'Tìm học sinh…', 'aria-label': 'Tìm học sinh', oninput: e => { feeQ = e.target.value; const t = feeQ.trim().toLowerCase(); rows.forEach(r => { r.style.display = !t || r.dataset.q.includes(t) ? '' : 'none'; }); } });
+  const t = feeQ.trim().toLowerCase();
+  if (t) rows.forEach(r => { r.style.display = r.dataset.q.includes(t) ? '' : 'none'; });
+  return el('div', {}, [q, el('div', { class: 'ft', role: 'table' }, [el('div', { class: 'ft-head', role: 'row' }, [el('span', { textContent: 'Học sinh & lớp' }), el('span', { textContent: 'Số tiền' }), el('span', { textContent: 'Trạng thái' }), el('span', {})])].concat(rows))]);
+}
+function feeDrawer(it) {
+  const close = () => { feeOpen = null; render(); };
+  const [tone, text] = feePill(it);
+  return el('div', {}, [el('div', { class: 'dw-veil', onclick: close }), el('aside', { class: 'drawer', role: 'dialog', 'aria-label': fullName(it) }, [
+    el('div', { class: 'dw-head' }, [el('span', { class: 'ft-who' }, [el('i', { style: 'background:' + avColor(it.name), textContent: String(it.eng || it.name).trim().charAt(0).toUpperCase() }), el('span', {}, [el('b', { textContent: fullName(it) }), el('small', { textContent: cur.tab + ' · đợt ' + cur.dot })])]),
+      el('span', { class: 'pill p-' + tone, textContent: text }), el('div', { class: 'fill' }), el('button', { class: 'quiet', textContent: '✕', 'aria-label': 'Đóng', onclick: close })]),
+    el('div', { class: 'dw-body' }, [feeRow(it)])])]);
+}
+document.addEventListener('keydown', e => { if (e.key === 'Escape' && feeOpen) { feeOpen = null; render(); } });
 function feeRow(it) {
   const d = el('input', { type: 'date', value: picked[it.key] || localDate(), max: localDate(), 'aria-label': 'Ngày nộp của ' + it.name, oninput: e => { picked[it.key] = e.target.value; } });
   const gone = !it.paid && daRoi(it);
