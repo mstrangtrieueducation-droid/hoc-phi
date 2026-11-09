@@ -1610,7 +1610,7 @@ function fillGrid(grid, rows) {
 }
 /* ---------- Tạo lớp mới (owner 09/11/2026) ---------- */
 // The app fills the Sheet's TAO_LOP form and ticks B31. The Sheet's own script makes the tab, the DANH_SACH_LOP row and the
-// roster; the timer hpWebTaoLopTimer (TaoLopTuWeb.gs, every 5 minutes) starts it, since an API write fires no "on edit".
+// roster; the timer hpWebTaoLopTimer (TaoLopTuWeb.gs, every 10 minutes) starts it, since an API write fires no "on edit".
 let tl = null, tlTimer = 0;
 async function moTaoLop() {
   clearTimeout(tlTimer);
@@ -1666,7 +1666,7 @@ async function luuTaoLop() {
     await batchWrite(r.data);
     tl.name = r.name; $('tlErr').textContent = '';
     $('tlForm').hidden = true; $('tlLuu').hidden = true; $('tlMo').hidden = true;
-    $('tlStatus').textContent = 'Đã gửi yêu cầu tạo ' + r.name + '. Trong vòng 5 phút Sheet tự tạo tab lớp, thêm vào danh sách lớp và lấy học sinh từ file Theo dõi toàn diện.\nCứ để cửa sổ này mở, app tự báo khi xong. Đóng cửa sổ thì Sheet vẫn tạo.';
+    $('tlStatus').textContent = 'Đã gửi yêu cầu tạo ' + r.name + '. Trong vòng 10 phút Sheet tự tạo tab lớp, thêm vào danh sách lớp và lấy học sinh từ file Theo dõi toàn diện.\nCứ để cửa sổ này mở, app tự báo khi xong. Đóng cửa sổ thì Sheet vẫn tạo.';
     theoDoiTaoLop();
   } catch (e) { $('tlErr').textContent = 'Không ghi được: ' + e.message; $('tlLuu').disabled = false; }
 }
@@ -1692,13 +1692,13 @@ function theoDoiTaoLop() {
         $('tlStatus').textContent = 'Sheet báo: ' + s.text; $('tlErr').textContent = 'Chưa tạo được lớp. Sửa thông tin rồi bấm Tạo lớp lại.';
         $('tlForm').hidden = false; $('tlLuu').hidden = false; $('tlLuu').disabled = false; $('tlMo').hidden = true; return;
       }
-      // A busy Sheet keeps the box ticked and the 5-minute timer tries again.
-      if (/^tạm bận/i.test(b32)) $('tlStatus').textContent = 'Sheet đang bận, 5 phút nữa tự thử lại. Không cần gửi lại.';
+      // A busy Sheet keeps the box ticked and the 10-minute timer tries again.
+      if (/^tạm bận/i.test(b32)) $('tlStatus').textContent = 'Sheet đang bận, 10 phút nữa tự thử lại. Không cần gửi lại.';
       else if (/^(đang|đã nhận)/i.test(b32)) $('tlStatus').textContent = 'Sheet đang tạo ' + name + '… (' + b32 + ')';
     } catch (e) { /* try again on the next tick */ }
-    if (Date.now() - start < 30 * 60000) tlTimer = setTimeout(tick, 8000);
+    if (Date.now() - start < 45 * 60000) tlTimer = setTimeout(tick, 30000);
   };
-  tlTimer = setTimeout(tick, 8000);
+  tlTimer = setTimeout(tick, 30000);
 }
 function renderClass(box) {
   if (!cur) { box.append(el('div', { class: 'empty', textContent: 'Đang tải lớp…' })); return; }
