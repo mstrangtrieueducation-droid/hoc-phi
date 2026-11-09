@@ -644,10 +644,13 @@ async function loadCal(force) {
   calLoading = false; if (view === 'cal' || ((view === 'home' || view === 'lop') && !homeBusy())) render();
 }
 async function loadSchedule(force) {
-  if (schedLoading || !cal || (!force && sched && !sched.error && Date.now() - sched.at < 1800000)) return;
+  // A class added since the last read (a new class, or one that just got a due date) makes the saved copy stale.
+  const missing = cur && cur.tab && sched && sched.sessions && !(cur.tab in sched.sessions);
+  if (schedLoading || !cal || (!force && !missing && sched && !sched.error && Date.now() - sched.at < 1800000)) return;
   schedLoading = true; if (view === 'cal') render();
   try {
-    const tabs = cal.list.map(x => x.tab);
+    // The open class is read too, even when the collection list does not have it yet.
+    const tabs = [...new Set(cal.list.map(x => x.tab).concat(cur && cur.tab ? [cur.tab] : []))];
     const lessonRows = await batchGet(tabs.map(t => L.quote(t) + '!AK20:AK39')), lessons = {};
     tabs.forEach((t, k) => { lessons[t] = lessonRows[k].map(r => L.dayOf(r[0])).filter(n => !isNaN(n)); });
     const first = Math.min(...tabs.map(t => lessons[t].length ? Math.min(...lessons[t]) : Infinity));
@@ -684,7 +687,7 @@ async function loadSchedule(force) {
   } catch (e) {
     sched = { error: /permission|caller does not have/i.test(e.message) ? 'Tài khoản này chưa có quyền xem file Schedule.' : 'Chưa đọc được Schedule: ' + e.message };
   }
-  schedLoading = false; if (view === 'cal') render();
+  schedLoading = false; if (view === 'cal' || (view === 'class' && tab === 'dot')) render();
 }
 function openCal() { goTo('cal'); loadCal().then(() => loadSchedule()); }
 function dueText(x) {
@@ -863,7 +866,7 @@ async function moTinh(it) {
     if (/CẦN KIỂM TRA/.test(String(r[21]))) throw new Error('Tiền sách đang lỗi: ' + r[21]);
     const data = await readClass(it.cls), before = data.history.find(h => Number(h.dot) === Number(data.nextDot) - 1), prevEnd = L.dayOf(before && before.to ? before.to : data.prevEnd);
     const list = !isNaN(prevEnd) && sched && sched.sessions && sched.last ? L.scheduleLessons(prevEnd, data.lessons.length || Number(data.sessions) || 20, sched.sessions[it.cls], sched.last, data.lessons) : data.lessons.map(day => ({ day, known: false }));
-    const dot = Number(data.nextDot) - 1, me = data.items.find(x => L.clean(x.name) === L.clean(it.name));
+    const dot = Math.max(1, Number(data.nextDot) - 1), me = data.items.find(x => L.clean(x.name) === L.clean(it.name));
     // The owner's rule: a student who already paid the đợt they left in owes nothing for it.
     const paid = me && (String(data.dot) === String(dot) ? me.paid : me.prev && me.prev.dot === String(dot) && me.prev.paid);
     const accountRow = (acc || []).find(a => a[0] === r[22]);
@@ -1749,7 +1752,7 @@ function renderDot(box) {
   const useSchedule = sched && sched.sessions && sched.last && !isNaN(prevEnd);
   // Dates follow the Schedule; the file's plan only fills weeks the Schedule has not reached.
   const list = useSchedule ? L.scheduleLessons(prevEnd, cur.lessons.length || Number(cur.sessions) || 20, sched.sessions[cur.tab], sched.last, cur.lessons) : cur.lessons.map(day => ({ day, known: false }));
-  const learned = list.filter(x => x.known && x.day <= today).length, learning = Number(cur.nextDot) - 1, first = list[0], last = list[list.length - 1];
+  const learned = list.filter(x => x.known && x.day <= today).length, learning = Math.max(1, Number(cur.nextDot) - 1), first = list[0], last = list[list.length - 1];
   const differs = useSchedule && last && !isNaN(L.dayOf(cur.end)) && last.day !== L.dayOf(cur.end);
   const next = list.find(x => x.day >= today), dueDay = L.dayOf(cur.dueDate), toDue = dueDay - today;
   const fact = (label, big, small, extra) => el('div', { class: 'fact' }, [el('span', { class: 'lab', textContent: label }), el('b', { textContent: big }), small ? el('span', { class: 'sub', textContent: small }) : '', extra || '']);
