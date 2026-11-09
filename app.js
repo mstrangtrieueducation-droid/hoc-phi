@@ -1580,7 +1580,8 @@ let lopFilter = 'all';
 function renderLop(box) {
   const rows = classRows();
   box.append(el('div', { class: 'page-title' }, [
-    el('div', {}, [el('h1', { textContent: 'Các lớp' }), el('div', { class: 'sub', textContent: updatedText() })]), updateButton()]));
+    el('div', {}, [el('h1', { textContent: 'Các lớp' }), el('div', { class: 'sub', textContent: updatedText() })]),
+    el('div', { style: 'display:flex;flex-wrap:wrap;gap:8px' }, (!linkKey || linkRole === 'chu' ? [el('button', { class: 'act', textContent: '+ Tạo lớp mới', onclick: moTaoLop })] : []).concat(updateButton()))]));
   const pick = (id, label) => el('button', { textContent: label, 'aria-pressed': String(lopFilter === id), onclick: () => { lopFilter = id; render(); } });
   const q = el('input', { class: 'search', type: 'search', value: query, placeholder: 'Tìm lớp, ví dụ KIDS 31', 'aria-label': 'Tìm lớp',
     oninput: e => { query = e.target.value; const g = $('grid'); if (g) fillGrid(g, rows); } });
@@ -1604,6 +1605,98 @@ function fillGrid(grid, rows) {
     }
     return el('button', { class: 'class k-' + kindOfName(r.name), onclick: () => { tab = 'thu'; filter = 'can'; openClass(r.name); } }, kids);
   }));
+}
+/* ---------- Tạo lớp mới (owner 09/11/2026) ---------- */
+// The app fills the Sheet's TAO_LOP form. The Sheet's own script makes the tab, the DANH_SACH_LOP row and the roster when
+// B31 is ticked by hand: that script runs "on edit", which a write from the app does not start.
+let tl = null, tlTimer = 0;
+async function moTaoLop() {
+  clearTimeout(tlTimer);
+  tl = { books: [''], listed: [], accounts: [], byPrefix: {}, gid: null };
+  $('tlErr').textContent = ''; $('tlStatus').textContent = 'Đang đọc danh sách lớp…';
+  $('tlLuu').hidden = false; $('tlLuu').disabled = true; $('tlMo').hidden = true;
+  $('tlForm').hidden = false; $('tlForm').replaceChildren(); $('taoLop').showModal();
+  try {
+    const [[rows, tao], meta] = await Promise.all([batchGet(["'DANH_SACH_LOP'!A2:E80", "'TAO_LOP'!B31:B32"]), api('?fields=sheets.properties(sheetId%2Ctitle)'), loadBooks()]);
+    tl.listed = rows.filter(r => r[0] && r[4]).map(r => r[0]).concat(meta.sheets.map(s => s.properties.title));
+    tl.gid = (meta.sheets.find(s => s.properties.title === 'TAO_LOP') || { properties: {} }).properties.sheetId;
+    rows.forEach(r => { const acc = String(r[3] || '').trim(), pre = String(r[0] || '').replace(/\s*\d+$/, '').trim().toUpperCase(); if (!acc) return; if (tl.accounts.indexOf(acc) < 0) tl.accounts.push(acc); if (pre && !tl.byPrefix[pre]) tl.byPrefix[pre] = acc; });
+    if (L.clean((tao[0] || [])[0]) === 'TRUE') { $('tlStatus').textContent = 'Sheet đang tạo một lớp khác: ' + ((tao[1] || [])[0] || '') + '\nĐợi xong rồi mở lại.'; return; }
+  } catch (e) { $('tlStatus').textContent = ''; $('tlErr').textContent = 'Chưa đọc được Sheet: ' + e.message; return; }
+  veTaoLop(); $('tlStatus').textContent = ''; $('tlLuu').disabled = false;
+}
+function veTaoLop() {
+  const inp = (id, label, props) => [el('label', { for: id, textContent: label }), el('input', Object.assign({ id }, props || {}))];
+  const half = (...kids) => el('div', { class: 'two' }, kids.map(k => el('div', {}, k)));
+  const acc = el('select', { id: 'tlAcc', 'aria-label': 'Tài khoản nhận tiền' }, [el('option', { value: '', textContent: 'Chọn tài khoản' })].concat(tl.accounts.map(a => el('option', { value: a, textContent: a }))));
+  let accTay = false; acc.addEventListener('change', () => { accTay = true; });
+  const ten = inp('tlName', 'Tên lớp', { placeholder: 'Ví dụ KIDS 40', autocomplete: 'off', oninput: e => {
+    if (accTay) return; const pre = L.taoLopName(e.target.value).replace(/\s*\d+$/, ''); acc.value = tl.byPrefix[pre] || '';
+  } });
+  const day = k => el('select', { id: 'tlDay' + k, 'aria-label': 'Thứ học ' + (k + 1) }, L.TAO_LOP_DAYS.map((d, i) => el('option', { value: i ? d : '', textContent: i ? d.slice(4) : (k ? '(không)' : 'Chọn thứ') })));
+  const books = el('div', { class: 'books' });
+  const veSach = () => {
+    const list = bookList || [];
+    books.replaceChildren(...tl.books.map((value, k) => el('select', { 'aria-label': 'Sách ' + (k + 1), onchange: e => { tl.books[k] = e.target.value; } },
+      [el('option', { value: '', textContent: k === 0 ? 'Không có sách' : '(trống)' })].concat(list.map(b => el('option', { value: b.name, textContent: b.name + (b.price ? ' · ' + L.fmt(b.price) + ' đ' : ''), selected: b.name === value }))))));
+    if (tl.books.length < 5) books.append(el('button', { class: 'act', type: 'button', textContent: '+ Thêm sách', onclick: () => { tl.books.push(''); veSach(); } }));
+  };
+  veSach();
+  $('tlForm').replaceChildren(...ten,
+    ...inp('tlLink', 'Link file Theo dõi toàn diện của lớp', { placeholder: 'https://docs.google.com/spreadsheets/d/…', autocomplete: 'off' }),
+    half(inp('tlTab', 'Tab danh sách trong file đó', { value: 'THEO DÕI TOÀN DIỆN' }), inp('tlRow', 'Dòng học sinh đầu tiên', { inputmode: 'numeric', placeholder: 'Tự: 5 (FIGHTER 4)' })),
+    half(inp('tlFirst', 'Ngày học buổi đầu tiên', { type: 'date' }), inp('tlSessions', 'Số buổi một đợt', { inputmode: 'numeric', value: '20' })),
+    half(inp('tlFee', 'Học phí một đợt', { inputmode: 'numeric', placeholder: 'Ví dụ 3600000' }), inp('tlPeriod', 'Đợt đang thu', { inputmode: 'numeric', value: '1' })),
+    el('label', { for: 'tlAcc', textContent: 'Tài khoản nhận tiền' }), acc,
+    el('label', { textContent: 'Thứ học' }), el('div', { class: 'two' }, [0, 1, 2, 3].map(day)),
+    el('label', { textContent: 'Sách, tài liệu đợt đầu (nếu có)' }), books);
+}
+async function luuTaoLop() {
+  const v = id => $(id).value;
+  const f = { name: v('tlName'), link: v('tlLink'), tab: v('tlTab'), startRow: v('tlRow'), period: v('tlPeriod'), sessions: v('tlSessions'),
+    firstDay: isoToText(v('tlFirst')), fee: v('tlFee'), account: v('tlAcc'), books: tl.books, days: [0, 1, 2, 3].map(k => v('tlDay' + k)) };
+  const r = L.taoLopForm(f, tl.listed);
+  if (r.errors) { $('tlErr').textContent = r.errors.join(' '); return; }
+  $('tlErr').textContent = 'Đang ghi vào Sheet…'; $('tlLuu').disabled = true;
+  try {
+    const [tao] = await batchGet(["'TAO_LOP'!B31:B32"]);
+    if (L.clean((tao[0] || [])[0]) === 'TRUE') throw new Error('Sheet đang tạo một lớp khác, đợi xong rồi thử lại.');
+    await batchWrite(r.data);
+    tl.name = r.name; $('tlErr').textContent = '';
+    $('tlForm').hidden = true; $('tlLuu').hidden = true; $('tlMo').hidden = false;
+    $('tlStatus').textContent = 'Đã điền thông tin ' + r.name + ' vào tab TAO_LOP.\nBước cuối: bấm "Mở Sheet, tick ô tạo lớp" rồi tick ô NÚT TẠO LỚP (B31). Sheet tự tạo tab lớp, thêm vào danh sách lớp và lấy học sinh từ file Theo dõi toàn diện.\nCứ để cửa sổ này mở, app tự báo khi xong.';
+    theoDoiTaoLop();
+  } catch (e) { $('tlErr').textContent = 'Không ghi được: ' + e.message; $('tlLuu').disabled = false; }
+}
+function moSheetTaoLop() {
+  window.open('https://docs.google.com/spreadsheets/d/' + CONFIG.sheetId + '/edit' + (tl && tl.gid != null ? '#gid=' + tl.gid + '&range=B31' : ''), '_blank', 'noopener');
+}
+function theoDoiTaoLop() {
+  clearTimeout(tlTimer);
+  const name = tl.name, start = Date.now();
+  const tick = async () => {
+    if (!$('taoLop').open || !tl || tl.name !== name) return;
+    try {
+      // Done when a visible tab with the new name exists: the script builds it hidden under another name and renames it last.
+      const [[tao], meta] = await Promise.all([batchGet(["'TAO_LOP'!B31:B32"]), api('?fields=sheets.properties(title%2Chidden)')]);
+      const tabs = meta.sheets.filter(x => !x.properties.hidden).map(x => x.properties.title);
+      const b32 = (tao[1] || [])[0] || '', s = L.taoLopState((tao[0] || [])[0], b32, name, tabs);
+      if (s.done) {
+        $('tlStatus').textContent = 'Xong: ' + s.text + '\nLớp ' + name + ' đã có trong app. Nếu chưa thấy học sinh, đợi vài phút rồi bấm Cập nhật tất cả.'; $('tlMo').hidden = true;
+        try { await napDanhSachLop(); } catch (e) { /* the list comes back at the next open */ }
+        return;
+      }
+      if (s.error) {
+        $('tlStatus').textContent = 'Sheet báo: ' + s.text; $('tlErr').textContent = 'Chưa tạo được lớp. Sửa thông tin rồi bấm Điền vào Sheet lại.';
+        $('tlForm').hidden = false; $('tlLuu').hidden = false; $('tlLuu').disabled = false; $('tlMo').hidden = true; return;
+      }
+      // The Sheet says it is busy and keeps the box ticked; its retry timer is not installed, so a fresh tick is needed.
+      if (/^tạm bận/i.test(b32)) $('tlStatus').textContent = 'Sheet báo: ' + b32 + '\nĐợi 1 phút, bỏ tick ô B31 rồi tick lại.';
+      else if (/^(đang|đã nhận)/i.test(b32)) $('tlStatus').textContent = 'Sheet đang tạo ' + name + '… (' + b32 + ')';
+    } catch (e) { /* try again on the next tick */ }
+    if (Date.now() - start < 30 * 60000) tlTimer = setTimeout(tick, 8000);
+  };
+  tlTimer = setTimeout(tick, 8000);
 }
 function renderClass(box) {
   if (!cur) { box.append(el('div', { class: 'empty', textContent: 'Đang tải lớp…' })); return; }
@@ -1998,13 +2091,7 @@ async function afterLogin() {
   $('login').hidden = true; $('app').hidden = false;
   const cached = store.get('hp_classes'); if (cached) fillClasses(cached);
   view = 'home'; render();
-  try {
-    const [rows] = await batchGet(["'DANH_SACH_LOP'!A2:E45"]);
-    // Rows with no tracker link (T1, TV2) have no class tab yet.
-    const list = rows.filter(r => r[0] && r[4]).map(r => r[0]).sort((a, b) => a.localeCompare(b, 'vi', { numeric: true }));
-    store.set('hp_classes', list); fillClasses(list);
-    if (view === 'home') render();
-  } catch (e) { notice('Chưa đọc được danh sách lớp: ' + e.message, true); }
+  try { await napDanhSachLop(); } catch (e) { notice('Chưa đọc được danh sách lớp: ' + e.message, true); }
   if (pending.length) flush();
   loadMoves();
   denHanTD();
@@ -2014,6 +2101,13 @@ async function afterLogin() {
   // Read the calendar first so classes due for collection are refreshed before the others.
   await loadCal();
   loadAll(true);
+}
+async function napDanhSachLop() {
+  const [rows] = await batchGet(["'DANH_SACH_LOP'!A2:E80"]);
+  // Rows with no tracker link (T1, TV2) have no class tab yet.
+  const list = rows.filter(r => r[0] && r[4]).map(r => r[0]).sort((a, b) => a.localeCompare(b, 'vi', { numeric: true }));
+  store.set('hp_classes', list); fillClasses(list);
+  if (view === 'home' || view === 'lop') render();
 }
 function fillClasses(list) {
   classes = list; const s = $('lop'), v = s.value;
@@ -2035,6 +2129,9 @@ window.addEventListener('load', () => {
   $('btnCal').addEventListener('click', openCal);
   $('btnMoves').addEventListener('click', () => { goTo('moves'); if (!moves || Date.now() - moves.at > FRESH_MS) loadMoves(); });
   $('dvLuu').addEventListener('click', luuDuyet);
+  $('tlLuu').addEventListener('click', luuTaoLop);
+  $('tlMo').addEventListener('click', moSheetTaoLop);
+  $('tlHuy').addEventListener('click', () => { clearTimeout(tlTimer); $('taoLop').close(); });
   $('dvKhongThu').addEventListener('click', khongThuMove);
   $('dvHuy').addEventListener('click', () => $('duyet').close());
   $('thiepCopy').addEventListener('click', copyThiep);
