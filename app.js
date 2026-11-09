@@ -2116,7 +2116,7 @@ async function napDanhSachLop() {
 }
 function fillClasses(list) {
   classes = list; const s = $('lop'), v = s.value;
-  s.replaceChildren(el('option', { value: '', textContent: 'Mở nhanh một lớp…' }), ...list.map(n => el('option', { value: n, textContent: n })));
+  s.replaceChildren(el('option', { value: '', textContent: 'Chọn lớp' }), ...list.map(n => el('option', { value: n, textContent: n })));
   s.value = v;
 }
 window.addEventListener('load', () => {
@@ -2145,7 +2145,8 @@ window.addEventListener('load', () => {
   $('btnTheme').addEventListener('click', () => { const next = document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark'; store.set('hp_theme', next); applyTheme(next); });
   $('navTutor').addEventListener('click', openTutor);
   $('navNguoi').addEventListener('click', () => { goTo('nguoi'); loadNguoi(); });
-  $('btnOut').addEventListener('click', () => {
+  // The header has no sign-out button any more (owner 09/11); the handler stays for a button put back later.
+  if ($('btnOut')) $('btnOut').addEventListener('click', () => {
     if (pending.length && !confirm('Còn ' + pending.length + ' lần tick chưa lưu sẽ bị bỏ. Vẫn đăng xuất?')) return;
     if (linkKey && !confirm('Thoát trên máy này? Muốn vào lại phải mở lại link riêng của bạn.')) return;
     if (token) google.accounts.oauth2.revoke(token, () => {});
