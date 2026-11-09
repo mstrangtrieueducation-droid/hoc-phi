@@ -565,7 +565,7 @@
   }
   /* ---------- Tạo lớp mới (owner 09/11/2026) ----------
    * The app fills the Sheet's own TAO_LOP form (B3:B28) and ticks B31. A tick written through the API does not fire the
-   * Sheet's on-edit trigger, so the timer hpWebTaoLopTimer (TaoLopTuWeb.gs, every 5 minutes) hands it to the same handler.
+   * Sheet's on-edit trigger, so the timer hpWebTaoLopTimer (TaoLopTuWeb.gs, every 10 minutes) hands it to the same handler.
    * B12 is the day before the first lesson. */
   const TAO_LOP_DAYS = ['0 - Không chọn', '2 - Thứ 2', '3 - Thứ 3', '4 - Thứ 4', '5 - Thứ 5', '6 - Thứ 6', '7 - Thứ 7', '8 - Chủ nhật'];
   function taoLopName(s) {
@@ -601,7 +601,7 @@
       B(7, 30), B(8, 'standard'), B(10, digits(f.period) || 1), B(11, sessions), B(12, dayText(first - 1)), B(14, fee), B(15, f.account),
       { range: "'TAO_LOP'!B17:B21", values: pad(books, 5, '').map(v => [v]) },
       { range: "'TAO_LOP'!B23:B26", values: pad(days.slice(0, 4), 4, TAO_LOP_DAYS[0]).map(v => [v]) },
-      B(28, '_MAU_LOP'), B(31, true), B(32, 'App đã gửi yêu cầu tạo ' + name + ', Sheet tự tạo trong vòng 5 phút.')];
+      B(28, '_MAU_LOP'), B(31, true), B(32, 'App đã gửi yêu cầu tạo ' + name + ', Sheet tự tạo trong vòng 10 phút.')];
     return { name, data };
   }
   /** TAO_LOP B31:B32 read back: what the bound script says about this class. */
