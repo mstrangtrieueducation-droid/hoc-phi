@@ -563,6 +563,55 @@
       .sort((a, b) => b.dot - a.dot)[0];
     return hit ? hit.to : 0;
   }
+  /* ---------- Tạo lớp mới (owner 09/11/2026) ----------
+   * The app fills the Sheet's own TAO_LOP form (B3:B28); the bound script makes the tab when B31 is ticked by hand in the
+   * Sheet (an "on edit" trigger, which writes through the API do not fire). B12 is the day before the first lesson. */
+  const TAO_LOP_DAYS = ['0 - Không chọn', '2 - Thứ 2', '3 - Thứ 3', '4 - Thứ 4', '5 - Thứ 5', '6 - Thứ 6', '7 - Thứ 7', '8 - Chủ nhật'];
+  function taoLopName(s) {
+    const t = String(s || '').normalize('NFC').replace(/\s+/g, ' ').trim().toUpperCase();
+    return /^\d+$/.test(t) ? 'KIDS ' + t : t.replace(/^([A-Z]+)\s*(\d+)$/, '$1 $2');
+  }
+  function fileIdOf(s) {
+    const t = String(s || '').trim(), m = t.match(/\/d\/([\w-]{25,})/) || t.match(/^([\w-]{25,})$/);
+    return m ? m[1] : '';
+  }
+  /** f: name, link, tab, startRow, period, sessions, firstDay (dd/mm/yyyy), fee, account, books[], days[]; known = class names already listed. */
+  function taoLopForm(f, known) {
+    const errors = [], name = taoLopName(f.name), first = dayOf(f.firstDay), fee = digits(f.fee), sessions = digits(f.sessions);
+    const days = (f.days || []).filter(d => d && TAO_LOP_DAYS.indexOf(d) > 0);
+    if (!name) errors.push('Nhập tên lớp.');
+    else if ((known || []).some(k => clean(k).replace(/\s/g, '') === clean(name).replace(/\s/g, ''))) errors.push(name + ' đã có trong danh sách lớp.');
+    if (!fileIdOf(f.link)) errors.push('Dán link file Theo dõi toàn diện của lớp.');
+    if (isNaN(first)) errors.push('Chọn ngày học buổi đầu tiên.');
+    if (!fee) errors.push('Nhập học phí một đợt.');
+    if (!sessions) errors.push('Nhập số buổi một đợt.');
+    if (!days.length) errors.push('Chọn ít nhất một thứ học.');
+    if (!f.account) errors.push('Chọn tài khoản nhận tiền.');
+    // The first lesson must fall on one of the chosen days, or the Sheet would count lessons from the wrong day.
+    if (!isNaN(first) && days.length) {
+      const wd = new Date(first * 86400000).getUTCDay(), code = wd === 0 ? 8 : wd + 1;
+      if (!days.some(d => +d[0] === code)) errors.push('Ngày học đầu tiên ' + dayText(first) + ' là ' + TAO_LOP_DAYS[code - 1].slice(4) + ', không nằm trong các thứ học đã chọn.');
+    }
+    if (errors.length) return { errors };
+    const books = (f.books || []).filter(Boolean).slice(0, 5), pad = (a, n, v) => a.concat(Array(n - a.length).fill(v));
+    const B = (r, v) => ({ range: "'TAO_LOP'!B" + r, values: [[v]] });
+    const fighter = /^FIGHTER/.test(name);
+    const data = [B(3, name), B(4, String(f.link).trim()), B(5, String(f.tab || '').trim() || 'THEO DÕI TOÀN DIỆN'), B(6, digits(f.startRow) || (fighter ? 4 : 5)),
+      B(7, 30), B(8, 'standard'), B(10, digits(f.period) || 1), B(11, sessions), B(12, dayText(first - 1)), B(14, fee), B(15, f.account),
+      { range: "'TAO_LOP'!B17:B21", values: pad(books, 5, '').map(v => [v]) },
+      { range: "'TAO_LOP'!B23:B26", values: pad(days.slice(0, 4), 4, TAO_LOP_DAYS[0]).map(v => [v]) },
+      B(28, '_MAU_LOP'), B(32, 'App đã điền thông tin ' + name + '. Tick ô B31 để tạo lớp.')];
+    return { name, data };
+  }
+  /** TAO_LOP B31:B32 read back: what the bound script says about this class. */
+  function taoLopState(b31, b32, name, listed) {
+    const s = String(b32 || ''), has = new RegExp('(^|[^A-Z0-9])' + clean(name).replace(/ /g, '\\s*') + '([^A-Z0-9]|$)').test(clean(s));
+    if ((listed || []).some(k => clean(k) === clean(name)) && clean(b31) !== 'TRUE') return { done: true, text: s || 'Đã tạo ' + name + '.' };
+    if (has && /^(da tao|đã tạo|lop .* da co|lớp .* đã có)/i.test(s)) return { done: true, text: s };
+    if (has && /^(loi|lỗi)/i.test(s)) return { error: true, text: s };
+    return { text: s };
+  }
+
   /**
    * "Để đến hết đợt" (owner 08/11/2026): no leaving date is typed, the student studies to the end of the running đợt.
    * The đợt that today falls in, else the class's last listed lesson when it is still ahead; 0 when neither is known.
@@ -839,5 +888,5 @@
       v.sentAt || '', v.lan || '', v.by || '', v.paid || '', who || '', at || ''];
   }
 
-  return { hetDotEnd, lastLessonBefore, intakeLeave, classLessonDays, dotEndDay, tickStatus, tickBill, parseBlocks, TUTOR_MODES, tutorItems, tutorRecord, tutorSessions, tutorMissing, tutorMonths, tutorName, tutorMinutes, tutorRate, monthOf, monthText, billDay, hoursText, dayShort, leaveBill, recentExits, blocksOf, free, deferred, remindDue, REMIND_AFTER, REMIND_EVERY, sentDay, notMarked, dayOf, dayText, dayNow, calendar, classKey, weekSessions, scheduleGaps, scheduleLessons, weekdays, ackKey, sentIndex, leaveStatus, classifyMoves, moveInputs, qrFromMessage, intakeDue, EXIT_ACCOUNT, NEW_TAB, EXIT_TAB, buildClass, dropGop, addGop, discInput, discText, discValue, planDiscount, locate, classRanges, freshRanges, freshAt, planPaid, planUnpaid, planOverride, findPeriodCol, colA1, quote, fmt, digits, clean, isPaid, todayText, ACTIVE };
+  return { TAO_LOP_DAYS, taoLopName, fileIdOf, taoLopForm, taoLopState, hetDotEnd, lastLessonBefore, intakeLeave, classLessonDays, dotEndDay, tickStatus, tickBill, parseBlocks, TUTOR_MODES, tutorItems, tutorRecord, tutorSessions, tutorMissing, tutorMonths, tutorName, tutorMinutes, tutorRate, monthOf, monthText, billDay, hoursText, dayShort, leaveBill, recentExits, blocksOf, free, deferred, remindDue, REMIND_AFTER, REMIND_EVERY, sentDay, notMarked, dayOf, dayText, dayNow, calendar, classKey, weekSessions, scheduleGaps, scheduleLessons, weekdays, ackKey, sentIndex, leaveStatus, classifyMoves, moveInputs, qrFromMessage, intakeDue, EXIT_ACCOUNT, NEW_TAB, EXIT_TAB, buildClass, dropGop, addGop, discInput, discText, discValue, planDiscount, locate, classRanges, freshRanges, freshAt, planPaid, planUnpaid, planOverride, findPeriodCol, colA1, quote, fmt, digits, clean, isPaid, todayText, ACTIVE };
 });
