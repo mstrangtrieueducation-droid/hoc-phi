@@ -1609,8 +1609,8 @@ function fillGrid(grid, rows) {
   }));
 }
 /* ---------- Tạo lớp mới (owner 09/11/2026) ---------- */
-// The app fills the Sheet's TAO_LOP form. The Sheet's own script makes the tab, the DANH_SACH_LOP row and the roster when
-// B31 is ticked by hand: that script runs "on edit", which a write from the app does not start.
+// The app fills the Sheet's TAO_LOP form and ticks B31. The Sheet's own script makes the tab, the DANH_SACH_LOP row and the
+// roster; the timer hpWebTaoLopTimer (TaoLopTuWeb.gs, every 5 minutes) starts it, since an API write fires no "on edit".
 let tl = null, tlTimer = 0;
 async function moTaoLop() {
   clearTimeout(tlTimer);
@@ -1665,8 +1665,8 @@ async function luuTaoLop() {
     if (L.clean((tao[0] || [])[0]) === 'TRUE') throw new Error('Sheet đang tạo một lớp khác, đợi xong rồi thử lại.');
     await batchWrite(r.data);
     tl.name = r.name; $('tlErr').textContent = '';
-    $('tlForm').hidden = true; $('tlLuu').hidden = true; $('tlMo').hidden = false;
-    $('tlStatus').textContent = 'Đã điền thông tin ' + r.name + ' vào tab TAO_LOP.\nBước cuối: bấm "Mở Sheet, tick ô tạo lớp" rồi tick ô NÚT TẠO LỚP (B31). Sheet tự tạo tab lớp, thêm vào danh sách lớp và lấy học sinh từ file Theo dõi toàn diện.\nCứ để cửa sổ này mở, app tự báo khi xong.';
+    $('tlForm').hidden = true; $('tlLuu').hidden = true; $('tlMo').hidden = true;
+    $('tlStatus').textContent = 'Đã gửi yêu cầu tạo ' + r.name + '. Trong vòng 5 phút Sheet tự tạo tab lớp, thêm vào danh sách lớp và lấy học sinh từ file Theo dõi toàn diện.\nCứ để cửa sổ này mở, app tự báo khi xong. Đóng cửa sổ thì Sheet vẫn tạo.';
     theoDoiTaoLop();
   } catch (e) { $('tlErr').textContent = 'Không ghi được: ' + e.message; $('tlLuu').disabled = false; }
 }
@@ -1689,11 +1689,11 @@ function theoDoiTaoLop() {
         return;
       }
       if (s.error) {
-        $('tlStatus').textContent = 'Sheet báo: ' + s.text; $('tlErr').textContent = 'Chưa tạo được lớp. Sửa thông tin rồi bấm Điền vào Sheet lại.';
+        $('tlStatus').textContent = 'Sheet báo: ' + s.text; $('tlErr').textContent = 'Chưa tạo được lớp. Sửa thông tin rồi bấm Tạo lớp lại.';
         $('tlForm').hidden = false; $('tlLuu').hidden = false; $('tlLuu').disabled = false; $('tlMo').hidden = true; return;
       }
-      // The Sheet says it is busy and keeps the box ticked; its retry timer is not installed, so a fresh tick is needed.
-      if (/^tạm bận/i.test(b32)) $('tlStatus').textContent = 'Sheet báo: ' + b32 + '\nĐợi 1 phút, bỏ tick ô B31 rồi tick lại.';
+      // A busy Sheet keeps the box ticked and the 5-minute timer tries again.
+      if (/^tạm bận/i.test(b32)) $('tlStatus').textContent = 'Sheet đang bận, 5 phút nữa tự thử lại. Không cần gửi lại.';
       else if (/^(đang|đã nhận)/i.test(b32)) $('tlStatus').textContent = 'Sheet đang tạo ' + name + '… (' + b32 + ')';
     } catch (e) { /* try again on the next tick */ }
     if (Date.now() - start < 30 * 60000) tlTimer = setTimeout(tick, 8000);
