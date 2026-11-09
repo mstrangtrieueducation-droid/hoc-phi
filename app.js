@@ -1,5 +1,20 @@
 // Web app UI. All data comes from the Sheets API, through the personal-link gateway (or the Google sign-in kept as a spare); there is no server.
 const CONFIG = window.HP_CONFIG;
+// Owner 09/11: the page's own files are kept on the device (sw.js) so it opens at once; a newer copy reloads the page while it is still opening.
+(function () {
+  if (!('serviceWorker' in navigator) || location.protocol !== 'https:' && location.hostname !== 'localhost') return;
+  try { navigator.serviceWorker.register('sw.js').catch(() => {}); } catch (e) { return; }
+  navigator.serviceWorker.addEventListener('message', e => {
+    if (!e.data || e.data.type !== 'app-updated') return;
+    let last = 0; try { last = Number(sessionStorage.getItem('swReloadAt')) || 0; } catch (err) {}
+    const typing = document.activeElement && /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement.tagName);
+    if (performance.now() < 15000 && !typing && !(typeof pending !== 'undefined' && pending.length) && Date.now() - last > 30000) {
+      try { sessionStorage.setItem('swReloadAt', String(Date.now())); } catch (err) {}
+      location.reload();
+    }
+  });
+})();
+
 try { if (window.self !== window.top) document.documentElement.classList.add('framed'); } catch (e) { document.documentElement.classList.add('framed'); }
 const SHEET_API = 'https://sheets.googleapis.com/v4/spreadsheets/' + CONFIG.sheetId;
 const SCHEDULE_API = 'https://sheets.googleapis.com/v4/spreadsheets/' + CONFIG.scheduleId;
