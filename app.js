@@ -549,6 +549,25 @@ function render() {
   const dueNow = cal ? cal.list.filter(x => (x.group === 'den' || x.group === 'qua') && !daGuiHet(x)).length : 0;
   $('btnCal').textContent = dueNow ? 'Lịch thu (' + dueNow + ')' : 'Lịch thu';
   renderNotices();
+  viecTomTat();
+}
+// Owner 11/11 ("học phí đến hạn thu hay đến hạn nhắc… báo quản lí… tab học phí có chữ gì đó để quản lí click vào"): when this page runs
+// inside the class app (its Học phí tab, also loaded quietly there), it tells the class app the same counts as the Tổng quan tiles:
+// classes due to collect, students to remind again, sends not ticked, roster moves, tutor reminders. Class names and counts only.
+let tomTatTruoc = '';
+function viecTomTat() {
+  try {
+    if (window.parent === window || !cal) return;
+    const now = cal.list.filter(x => (x.group === 'den' || x.group === 'qua') && !daGuiHet(x));
+    const nhacLai = sentAt || sentRows.length ? nhacLaiRows() : [], notSent = chuaDanhDau(), dueUnsent = moves ? moves.due.filter(it => !it.problem && !dueMark(it)) : [];
+    const s = { den: now.map(x => x.tab), nhac: nhacLai.reduce((n, c) => n + c.list.filter(r => !r.blank).length, 0), nhacLop: nhacLai.map(c => c.data.tab),
+      chuaGui: notSent.reduce((n, r) => n + (r.left ? r.left.length : 1), 0) + dueUnsent.length, bienDong: moves ? moves.list.filter(m => !m.wait).length + moves.due.length : 0,
+      tutor: tutorViec().nhac.length };
+    const text = JSON.stringify(s);
+    if (text === tomTatTruoc) return;
+    tomTatTruoc = text;
+    window.parent.postMessage({ type: 'hp-viec', at: Date.now(), viec: s }, location.origin);
+  } catch (e) { /* the summary never breaks this page */ }
 }
 
 /* ---------- Who sent what on Zalo: a separate small file, so a tick never makes the tuition file recalculate ---------- */
