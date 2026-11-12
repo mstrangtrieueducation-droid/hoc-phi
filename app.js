@@ -63,9 +63,12 @@ function openStore() {
 let linkKey = '', linkRole = '';
 /** A call to the gateway. Its only trust is the key from the person's link; a key that was removed gets auth:false. */
 async function cong(body) {
-  const r = await fetch(CONFIG.congUrl, { method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' }, body: JSON.stringify(Object.assign({ k: linkKey }, body)) });
-  if (!r.ok) throw new Error('Không nối được cổng (' + r.status + ').');
-  const d = await r.json();
+  const text = JSON.stringify(Object.assign({ k: linkKey }, body)), send = url => fetch(url, { method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' }, body: text });
+  let r, d;
+  // Cloudflare out of reach or not answering properly: the same call goes to the Google gateway as before.
+  try { r = await send(CONFIG.congUrl); d = r.ok ? await r.json() : null; } catch (e) { d = null; }
+  if (!d && CONFIG.congGas) { r = await send(CONFIG.congGas); if (!r.ok) throw new Error('Không nối được cổng (' + r.status + ').'); d = await r.json(); }
+  if (!d) throw new Error('Không nối được cổng.');
   if (d.auth === false) { linkGone(); throw new Error('Link này đã bị gỡ.'); }
   if (d.error) throw new Error(d.error);
   return d;
