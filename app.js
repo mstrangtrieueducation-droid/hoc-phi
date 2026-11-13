@@ -530,6 +530,13 @@ function nhacHomNay() {
     el('span', { class: 'top-acts' }, [el('button', { class: 'quiet', textContent: 'Xem danh sách', onclick: toList }),
       el('button', { class: 'quiet', textContent: 'Để sau', onclick: () => { store.set('hp_nhac_an', today); renderNotices(); } })])]);
 }
+function moLinkDan() {
+  const box = $('linkPaste'), v = String(box.value || '').trim(), k = (v.match(/[#&]k=([\w-]{32,})/) || v.match(/^([\w-]{32,})$/) || [])[1];
+  box.value = '';
+  if (!k) { $('loginMsg').textContent = 'Không thấy mã trong link này. Dán nguyên link riêng cô Trang gửi.'; return; }
+  store.set('hp_link', k); linkKey = k; $('loginMsg').textContent = '';
+  showLogin(false); afterLogin();
+}
 function showLogin(again) {
   // Mid-work the page stays up: the next click renews the sign-in, and unsaved ticks wait in their queue.
   if (again && !$('app').hidden) {
@@ -2181,6 +2188,11 @@ window.addEventListener('load', () => {
   $('edLuu').addEventListener('click', () => ghiRieng($('edMsg').value, $('edAmt').value));
   $('edBo').addEventListener('click', () => ghiRieng('', ''));
   $('edHuy').addEventListener('click', () => $('sua').close());
+  // Owner 13/11: the personal link can be pasted on the login page (inside the class app there is no address bar).
+  if ($('linkGo')) {
+    $('linkGo').addEventListener('click', moLinkDan);
+    $('linkPaste').addEventListener('keydown', e => { if (e.key === 'Enter') moLinkDan(); });
+  }
   openStore().then(() => {
     applyTheme(store.get('hp_theme'));
     pending = store.get(QKEY) || []; cal = store.get('hp_cal'); sched = store.get('hp_sched'); tutor = store.get('hp_tutor'); restoreSent();
