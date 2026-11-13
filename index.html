@@ -64,6 +64,8 @@
   .login-box h1 { font-size: 22px; font-weight: 700; }
   .login-box p { color: var(--muted); margin: 8px 0 20px; }
   #btnLogin { width: 100%; min-height: 48px; }
+  .paste-row { display: flex; gap: 8px; margin: 0 0 12px; }
+  .paste-row input { flex: 1; min-width: 0; min-height: 44px; padding: 8px 12px; border: 1px solid var(--line); border-radius: 10px; background: var(--card); color: var(--ink); font: inherit; }
   #loginMsg { margin: 12px 0 0; min-height: 22px; font-size: 14px; color: var(--bad); }
 
   /* Shell */
@@ -486,6 +488,8 @@
     <div class="logo" aria-hidden="true">₫</div>
     <h1>Học phí</h1>
     <p>Mở bằng link riêng cô Trang đã gửi cho bạn, không cần đăng nhập.</p>
+    <!-- Owner 13/11: inside the class app there is no address bar, so the link can also be pasted here. -->
+    <div class="paste-row"><input id="linkPaste" type="password" autocomplete="off" placeholder="Hoặc dán link riêng vào đây" aria-label="Dán link riêng"><button id="linkGo" class="primary">Mở</button></div>
     <details style="margin-top:12px"><summary class="sub">Dự phòng: đăng nhập Google</summary>
     <button id="btnLogin" class="primary" disabled style="margin-top:8px">Đăng nhập Google</button></details>
     <p id="loginMsg" role="status"></p>
