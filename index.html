@@ -43,6 +43,9 @@
   }
   * { box-sizing: border-box; }
   html { -webkit-text-size-adjust: 100%; }
+  /* Owner 13/11: the page must not slide left and right on a phone. A wide table scrolls inside its own box; the page itself never does.
+     clip (not hidden) keeps the sticky header working. */
+  html, body { max-width: 100%; overflow-x: clip; overscroll-behavior-x: none; }
   body { margin: 0; background: var(--bg); color: var(--ink); font: 15px/1.5 "Be Vietnam Pro", Arial, sans-serif; font-variant-numeric: tabular-nums; }
   [hidden] { display: none !important; }
   h1, h2, p { margin: 0; }
